@@ -96,4 +96,8 @@ def is_valid_code(candidate: str) -> bool:
         if bad in cleaned:
             return False
 
+    # Reward codes in this game always contain at least one digit
+    if not re.search(r"\d", cleaned):
+        return False
+
     return True

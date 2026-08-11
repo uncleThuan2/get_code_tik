@@ -11,6 +11,8 @@ def test_is_valid_code():
     assert is_valid_code("") is False
     assert is_valid_code("SHORT") is False  # less than 6 chars
     assert is_valid_code("VERYLONGTEXT123456789") is False  # more than 16 chars
+    assert is_valid_code("CLONING") is False  # pure word without digits
+    assert is_valid_code("AIKHANG") is False  # pure word without digits
 
 
 def test_is_not_released():

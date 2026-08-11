@@ -34,10 +34,14 @@ class TikTokBrowser:
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
                 "--incognito",
+                "--window-size=1280,720",
+                "--force-device-scale-factor=1",
+                "--high-dpi-support=1",
             ],
         )
         self._context = await self._browser.new_context(
-            viewport=self.viewport,
+            viewport={"width": 1280, "height": 720},
+            device_scale_factor=1,
             user_agent=self.user_agent,
             locale="vi-VN",
             timezone_id="Asia/Ho_Chi_Minh",
