@@ -32,12 +32,31 @@ NOT_RELEASED_KEYWORDS = [
     "CHAO MUNG",
 ]
 
+# Blacklisted substrings derived from OCRing non-live profile page or UI text
+BLACKLISTED_SUBSTRINGS = [
+    "HOAVIEN",
+    "GIDIHOA",
+    "THEGIOI",
+    "CUATOI",
+    "INTERNET",
+    "5000P",
+    "3000P",
+    "1500P",
+    "500P",
+    "VIENCU",
+    "IDIHOA",
+    "PESTNN",
+    "HEGIDI",
+    "NEGIDI",
+    "HGIDI",
+    "GIDI",
+]
+
 
 def clean_ocr_text(text: str) -> str:
     """Normalize raw OCR text by removing spaces, punctuation, and newlines."""
     if not text:
         return ""
-    # Strip whitespace and non-alphanumeric characters
     cleaned = re.sub(r"[^A-Za-z0-9]", "", text)
     return cleaned.upper()
 
@@ -71,5 +90,10 @@ def is_valid_code(candidate: str) -> bool:
     # Reject known UI text patterns
     if is_not_released(candidate):
         return False
+
+    # Reject blacklisted UI substrings
+    for bad in BLACKLISTED_SUBSTRINGS:
+        if bad in cleaned:
+            return False
 
     return True
