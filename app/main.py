@@ -12,7 +12,7 @@ from app.tiktok.live_detector import detect_live_session
 from app.tiktok.live_session import enter_and_capture_live_session
 
 from app.vision.crop import crop_regions
-from app.vision.ocr import extract_code_from_crop
+from app.vision.ocr import extract_codes_from_crop
 from app.vision.validator import is_valid_code
 
 from app.storage.daily_file import append_codes_to_daily_file
@@ -64,25 +64,27 @@ async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_labe
             img = Image.open(temp_img_path)
             small_crop, large_crop = crop_regions(img, ocr_cfg)
 
-            # Process Small Code crop
-            small_candidate, _ = extract_code_from_crop(small_crop)
-            if small_candidate:
-                count = small_candidates.get(small_candidate, 0) + 1
-                small_candidates[small_candidate] = count
-                logger.info(f"Frame {frame_count}: Small Code candidate '{small_candidate}' (Confirmed {count}/{confirmation_frames_needed})")
-                if count >= confirmation_frames_needed:
-                    confirmed_small_codes.add(small_candidate)
+            # Process Small Code crop (supporting multiple stacked small codes)
+            small_codes_found, _ = extract_codes_from_crop(small_crop)
+            if small_codes_found:
+                for small_candidate in small_codes_found:
+                    count = small_candidates.get(small_candidate, 0) + 1
+                    small_candidates[small_candidate] = count
+                    logger.info(f"Frame {frame_count}: Small Code candidate '{small_candidate}' (Confirmed {count}/{confirmation_frames_needed})")
+                    if count >= confirmation_frames_needed:
+                        confirmed_small_codes.add(small_candidate)
             else:
                 small_candidates.clear()
 
             # Process Large Code crop
-            large_candidate, is_not_rel = extract_code_from_crop(large_crop)
-            if large_candidate and not is_not_rel:
-                count = large_candidates.get(large_candidate, 0) + 1
-                large_candidates[large_candidate] = count
-                logger.info(f"Frame {frame_count}: Large Code candidate '{large_candidate}' (Confirmed {count}/{confirmation_frames_needed})")
-                if count >= confirmation_frames_needed:
-                    confirmed_large_codes.add(large_candidate)
+            large_codes_found, is_not_rel = extract_codes_from_crop(large_crop)
+            if large_codes_found and not is_not_rel:
+                for large_candidate in large_codes_found:
+                    count = large_candidates.get(large_candidate, 0) + 1
+                    large_candidates[large_candidate] = count
+                    logger.info(f"Frame {frame_count}: Large Code candidate '{large_candidate}' (Confirmed {count}/{confirmation_frames_needed})")
+                    if count >= confirmation_frames_needed:
+                        confirmed_large_codes.add(large_candidate)
             else:
                 large_candidates.clear()
 
