@@ -79,4 +79,4 @@ jobs:
           path: |
             screenshots/
             debug/
-          retention-days: 7
+          retention-days: 1
