@@ -27,6 +27,11 @@ def preprocess_image_variants(pil_img: Image.Image) -> List[Image.Image]:
     # 5. Inverted Thresholding
     inverted = cv2.bitwise_not(otsu)
 
+    # 6. Adaptive Gaussian Thresholding (Isolates text inside colored game pills)
+    adaptive = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 10
+    )
+
     # Convert variants back to PIL Images
     variants = [
         pil_img,
@@ -34,6 +39,7 @@ def preprocess_image_variants(pil_img: Image.Image) -> List[Image.Image]:
         Image.fromarray(enhanced),
         Image.fromarray(otsu),
         Image.fromarray(inverted),
+        Image.fromarray(adaptive),
     ]
 
     return variants

@@ -42,6 +42,42 @@ async def hide_tiktok_overlays(page: Page):
         logger.warning(f"Failed to hide overlays: {e}")
 
 
+async def detect_and_handle_captcha(page: Page) -> bool:
+    """Check if CAPTCHA verification challenge is detected on page. If found, reload the page."""
+    try:
+        captcha_detected = await page.evaluate("""() => {
+            const captchaSelectors = [
+                '[id*="sec-sdk"]',
+                '[class*="sec-sdk"]',
+                '[class*="captcha"]',
+                '[class*="verify"]',
+                '[class*="challenge"]',
+                'iframe[src*="captcha"]'
+            ];
+            for (let sel of captchaSelectors) {
+                const el = document.querySelector(sel);
+                if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+                    return true;
+                }
+            }
+            const bodyText = document.body ? document.body.innerText : '';
+            if (bodyText.includes('Chọn 2 đối tượng') || bodyText.includes('Select 2 objects')) {
+                return true;
+            }
+            return false;
+        }""")
+
+        if captcha_detected:
+            logger.warning("CAPTCHA verification popup detected! Resetting page (page.reload())...")
+            await page.reload(wait_until="domcontentloaded")
+            await asyncio.sleep(3)
+            await hide_tiktok_overlays(page)
+            return True
+    except Exception as e:
+        logger.warning(f"Error checking CAPTCHA status: {e}")
+    return False
+
+
 async def enter_and_capture_live_session(
     page: Page,
     live_url: str,

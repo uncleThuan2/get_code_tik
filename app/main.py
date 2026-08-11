@@ -9,7 +9,7 @@ from PIL import Image
 from app.config import load_config
 from app.tiktok.browser import TikTokBrowser
 from app.tiktok.live_detector import detect_live_session
-from app.tiktok.live_session import enter_and_capture_live_session, hide_tiktok_overlays
+from app.tiktok.live_session import enter_and_capture_live_session, hide_tiktok_overlays, detect_and_handle_captcha
 
 from app.vision.crop import crop_regions
 from app.vision.ocr import extract_codes_from_crop
@@ -56,6 +56,7 @@ async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_labe
         temp_img_path = Path(f"screenshots/frame_{frame_count}.png")
 
         try:
+            await detect_and_handle_captcha(browser.page)
             await hide_tiktok_overlays(browser.page)
             await browser.take_screenshot(temp_img_path)
             if not temp_img_path.exists():
