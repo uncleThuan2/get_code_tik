@@ -22,7 +22,13 @@ async def hide_tiktok_overlays(page: Page):
                 '[class*="DivLoginGuide"]',
                 '[class*="DivMask"]',
                 '[class*="login-container"]',
-                '[class*="DivBottomBanner"]'
+                '[class*="DivBottomBanner"]',
+                '[id*="sec-sdk"]',
+                '[class*="sec-sdk"]',
+                '[class*="captcha"]',
+                '[class*="verify"]',
+                '[class*="challenge"]',
+                'iframe[src*="captcha"]'
             ];
             selectors.forEach(sel => {
                 document.querySelectorAll(sel).forEach(el => {

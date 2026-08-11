@@ -20,15 +20,15 @@ ocr:
   max_session_minutes: 5
   confirmation_frames: 2
   small_code_region:
-    x1: 0.30
+    x1: 0.24
     y1: 0.02
-    x2: 0.48
+    x2: 0.37
     y2: 0.32
   large_code_region:
-    x1: 0.31
-    y1: 0.31
-    x2: 0.46
-    y2: 0.37
+    x1: 0.24
+    y1: 0.32
+    x2: 0.36
+    y2: 0.38
 
 storage:
   directory: "data"

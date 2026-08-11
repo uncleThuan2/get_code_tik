@@ -6,9 +6,9 @@ logger = logging.getLogger(__name__)
 
 # Precise calibrated ratios based on stream screenshot (Video stream in center container)
 # Small code region (covers all 4 chest milestones: 5000, 3000, 1500, 500)
-DEFAULT_SMALL_REGION = {"x1": 0.30, "y1": 0.02, "x2": 0.48, "y2": 0.32}
-# Large code region (R5XJV9VQ2 pink box)
-DEFAULT_LARGE_REGION = {"x1": 0.31, "y1": 0.31, "x2": 0.46, "y2": 0.37}
+DEFAULT_SMALL_REGION = {"x1": 0.24, "y1": 0.02, "x2": 0.37, "y2": 0.32}
+# Large code region (pink box CODE GIỚI HẠN / R5XJV9VQ2)
+DEFAULT_LARGE_REGION = {"x1": 0.24, "y1": 0.32, "x2": 0.36, "y2": 0.38}
 
 
 def get_crop_box(img_size: Tuple[int, int], region_cfg: dict) -> Tuple[int, int, int, int]:
