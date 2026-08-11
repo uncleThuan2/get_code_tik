@@ -1,0 +1,47 @@
+tiktok:
+  profile_url: "https://www.tiktok.com/@thegioihoaviencuatoi2026"
+
+schedule:
+  timezone: "Asia/Ho_Chi_Minh"
+  release_times:
+    - "18:30"
+    - "19:30"
+    - "20:30"
+    - "21:30"
+  enter_offset_minutes: 5
+
+live:
+  check_interval_seconds: 10
+  max_wait_minutes: 5
+  page_load_timeout_seconds: 30
+
+ocr:
+  screenshot_interval_seconds: 2
+  max_session_minutes: 5
+  confirmation_frames: 2
+  small_code_region:
+    x1: 0.20
+    y1: 0.30
+    x2: 0.80
+    y2: 0.50
+  large_code_region:
+    x1: 0.20
+    y1: 0.50
+    x2: 0.80
+    y2: 0.75
+
+storage:
+  directory: "data"
+
+telegram:
+  enabled: true
+
+cleanup:
+  delete_previous_days: true
+
+browser:
+  headless: true
+  viewport:
+    width: 1280
+    height: 720
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
