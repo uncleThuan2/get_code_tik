@@ -11,8 +11,7 @@ from app.tiktok.browser import TikTokBrowser
 from app.tiktok.live_detector import detect_live_session
 from app.tiktok.live_session import enter_and_capture_live_session, hide_tiktok_overlays, detect_and_handle_captcha
 
-from app.vision.crop import crop_regions
-from app.vision.ocr import extract_codes_from_crop
+from app.vision.ocr import extract_all_codes_from_stream
 from app.vision.validator import is_valid_code
 
 from app.storage.daily_file import append_codes_to_daily_file
@@ -27,94 +26,42 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
-
-logger = logging.getLogger("main")
+logger = logging.getLogger(__name__)
 
 
 async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_label: str):
-    """Run screenshot & OCR scan loop during live stream session."""
-    ocr_cfg = config.get("ocr", {})
-    screenshot_interval = ocr_cfg.get("screenshot_interval_seconds", 2)
-    max_session_minutes = ocr_cfg.get("max_session_minutes", 5)
-    confirmation_frames_needed = ocr_cfg.get("confirmation_frames", 2)
+    """Direct single-pass capture: enter stream, take screenshot, extract codes via Gemini Vision AI, notify & exit."""
+    temp_img_path = Path("screenshots/frame_1.png")
 
-    total_duration_seconds = max_session_minutes * 60
-    end_time = asyncio.get_event_loop().time() + total_duration_seconds
+    logger.info("Capturing stream screenshot for Gemini Vision AI...")
+    await detect_and_handle_captcha(browser.page)
+    await hide_tiktok_overlays(browser.page)
+    await browser.take_screenshot(temp_img_path)
 
-    # Confirmation tracking buffers: code_candidate -> consecutive_count
-    small_candidates: Dict[str, int] = {}
-    large_candidates: Dict[str, int] = {}
+    if not temp_img_path.exists():
+        logger.error("Failed to capture stream screenshot frame.")
+        return
 
-    confirmed_small_codes: Set[str] = set()
-    confirmed_large_codes: Set[str] = set()
+    img = Image.open(temp_img_path)
 
-    frame_count = 0
-    logger.info(f"Starting OCR session loop (Max duration: {max_session_minutes}m, Interval: {screenshot_interval}s)")
+    # Direct 2-Images + 1-Prompt Gemini Vision AI Extraction
+    small_codes_found, large_codes_found = extract_all_codes_from_stream(img)
 
-    while asyncio.get_event_loop().time() < end_time:
-        frame_count += 1
-        temp_img_path = Path(f"screenshots/frame_{frame_count}.png")
-
-        try:
-            await detect_and_handle_captcha(browser.page)
-            await hide_tiktok_overlays(browser.page)
-            await browser.take_screenshot(temp_img_path)
-            if not temp_img_path.exists():
-                await asyncio.sleep(screenshot_interval)
-                continue
-
-            img = Image.open(temp_img_path)
-            small_crop, large_crop = crop_regions(img, ocr_cfg)
-
-            # Process Small Code crop (supporting multiple stacked small codes)
-            small_codes_found, _ = extract_codes_from_crop(small_crop)
-            if small_codes_found:
-                for small_candidate in small_codes_found:
-                    count = small_candidates.get(small_candidate, 0) + 1
-                    small_candidates[small_candidate] = count
-                    logger.info(f"Frame {frame_count}: Small Code candidate '{small_candidate}' (Confirmed {count}/{confirmation_frames_needed})")
-                    if count >= confirmation_frames_needed:
-                        confirmed_small_codes.add(small_candidate)
-            else:
-                small_candidates.clear()
-
-            # Process Large Code crop
-            large_codes_found, is_not_rel = extract_codes_from_crop(large_crop)
-            if large_codes_found and not is_not_rel:
-                for large_candidate in large_codes_found:
-                    count = large_candidates.get(large_candidate, 0) + 1
-                    large_candidates[large_candidate] = count
-                    logger.info(f"Frame {frame_count}: Large Code candidate '{large_candidate}' (Confirmed {count}/{confirmation_frames_needed})")
-                    if count >= confirmation_frames_needed:
-                        confirmed_large_codes.add(large_candidate)
-            else:
-                large_candidates.clear()
-
-        except Exception as e:
-            logger.warning(f"Frame {frame_count} processing error: {e}")
-
-        await asyncio.sleep(screenshot_interval)
-
-    logger.info(f"OCR session ended after {frame_count} frames.")
-    logger.info(f"Confirmed Small Codes: {list(confirmed_small_codes)}")
-    logger.info(f"Confirmed Large Codes: {list(confirmed_large_codes)}")
+    logger.info(f"Gemini Vision Extracted -> Small Codes: {small_codes_found} | Large Codes: {large_codes_found}")
 
     # Filter out duplicates against daily file
-    new_small = filter_new_codes(list(confirmed_small_codes))
-    new_large = filter_new_codes(list(confirmed_large_codes))
+    new_small = filter_new_codes(small_codes_found)
+    new_large = filter_new_codes(large_codes_found)
 
     if new_small or new_large:
         logger.info(f"New Reward Codes Detected! Small: {new_small} | Large: {new_large}")
-        # Save to daily file
         append_codes_to_daily_file(time_label, new_small, new_large)
-        # Send Telegram notification
         notify_new_reward_codes(time_label, new_small, new_large)
     else:
-        logger.info("No new non-duplicate codes detected during this session.")
+        logger.info("No new non-duplicate codes detected.")
 
 
-async def main_pipeline():
-    """Complete Bot Main Execution Pipeline."""
+async def main():
     logger.info("==================================================")
     logger.info("   TIKTOK LIVE REWARD CODE BOT — MAIN EXECUTOR    ")
     logger.info("==================================================")
@@ -145,7 +92,6 @@ async def main_pipeline():
             page_load_timeout=page_load_timeout,
         )
 
-        # Capture initial profile status screenshot so Artifacts always has a file
         try:
             await browser.take_screenshot("screenshots/status_check.png")
         except Exception:
@@ -156,10 +102,10 @@ async def main_pipeline():
             await page.goto(live_url, timeout=page_load_timeout * 1000, wait_until="domcontentloaded")
             await asyncio.sleep(3)
 
-            # Run OCR loop
+            # Direct Gemini Vision AI Single Pass
             await run_ocr_stream_session(browser, config, time_label)
         else:
-            logger.warning(f"Account {profile_url} was NOT LIVE during {max_wait} minutes check window.")
+            logger.warning(f"Account {profile_url} was NOT LIVE during check window.")
             try:
                 await browser.take_screenshot("screenshots/offline_check.png")
             except Exception:
@@ -169,15 +115,11 @@ async def main_pipeline():
         logger.error(f"Execution error in main pipeline: {e}", exc_info=True)
     finally:
         await browser.close()
-        cleanup_temp_screenshots()
-        logger.info("==================================================")
-        logger.info("            BOT EXECUTION FINISHED                ")
-        logger.info("==================================================")
 
-
-def main():
-    asyncio.run(main_pipeline())
+    # Clean up temporary screenshots
+    cleanup_temp_screenshots()
+    logger.info("Pipeline execution completed cleanly.")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
