@@ -96,8 +96,13 @@ def is_valid_code(candidate: str) -> bool:
         if bad in cleaned:
             return False
 
-    # Reward codes in this game always contain at least one digit
-    if not re.search(r"\d", cleaned):
+    # Reward codes in this game must contain both letters and digits
+    if not re.search(r"[A-Za-z]", cleaned) or not re.search(r"\d", cleaned):
+        return False
+
+    # Digits must not dominate the candidate code (> 60% digits is UI point noise like 115000V)
+    digit_count = sum(1 for c in cleaned if c.isdigit())
+    if (digit_count / len(cleaned)) > 0.60:
         return False
 
     return True

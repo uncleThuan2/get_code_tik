@@ -76,5 +76,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: live-screenshot
-          path: screenshots/
+          path: |
+            screenshots/
+            debug/
           retention-days: 7

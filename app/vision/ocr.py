@@ -26,10 +26,9 @@ def extract_codes_from_crop(crop_img: Image.Image) -> Tuple[List[str], bool]:
 
     for idx, variant in enumerate(variants):
         try:
-            # PSM 6: Assume a single uniform block of text (ideal for multi-line stacked text)
-            # PSM 11: Sparse text
-            # PSM 3: Fully automatic page segmentation
-            for psm in [6, 11, 3, 7]:
+            # Use PSM 6 (uniform block) and PSM 7 (single line) only
+            # Avoid PSM 11 (sparse text) and PSM 3 which stitch random noise
+            for psm in [6, 7]:
                 config_str = f"--psm {psm} -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
                 raw_text = pytesseract.image_to_string(variant, config=config_str).strip()
 
