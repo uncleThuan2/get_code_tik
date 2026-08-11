@@ -145,6 +145,12 @@ async def main_pipeline():
             page_load_timeout=page_load_timeout,
         )
 
+        # Capture initial profile status screenshot so Artifacts always has a file
+        try:
+            await browser.take_screenshot("screenshots/status_check.png")
+        except Exception:
+            pass
+
         if is_live and live_url:
             logger.info(f"Account is LIVE! Entering stream: {live_url}")
             await page.goto(live_url, timeout=page_load_timeout * 1000, wait_until="domcontentloaded")
@@ -154,6 +160,10 @@ async def main_pipeline():
             await run_ocr_stream_session(browser, config, time_label)
         else:
             logger.warning(f"Account {profile_url} was NOT LIVE during {max_wait} minutes check window.")
+            try:
+                await browser.take_screenshot("screenshots/offline_check.png")
+            except Exception:
+                pass
 
     except Exception as e:
         logger.error(f"Execution error in main pipeline: {e}", exc_info=True)
