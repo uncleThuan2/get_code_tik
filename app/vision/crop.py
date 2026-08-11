@@ -5,8 +5,8 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 # Precise calibrated ratios based on stream screenshot (Video stream in center container)
-# Small code region (w3qg8mz5 box)
-DEFAULT_SMALL_REGION = {"x1": 0.34, "y1": 0.24, "x2": 0.47, "y2": 0.31}
+# Small code region (covers all 4 chest milestones: 5000, 3000, 1500, 500)
+DEFAULT_SMALL_REGION = {"x1": 0.30, "y1": 0.02, "x2": 0.48, "y2": 0.32}
 # Large code region (R5XJV9VQ2 pink box)
 DEFAULT_LARGE_REGION = {"x1": 0.31, "y1": 0.31, "x2": 0.46, "y2": 0.37}
 

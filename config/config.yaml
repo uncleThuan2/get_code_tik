@@ -20,10 +20,10 @@ ocr:
   max_session_minutes: 5
   confirmation_frames: 2
   small_code_region:
-    x1: 0.34
-    y1: 0.24
-    x2: 0.47
-    y2: 0.31
+    x1: 0.30
+    y1: 0.02
+    x2: 0.48
+    y2: 0.32
   large_code_region:
     x1: 0.31
     y1: 0.31
