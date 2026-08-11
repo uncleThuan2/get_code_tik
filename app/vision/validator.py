@@ -18,6 +18,18 @@ NOT_RELEASED_KEYWORDS = [
     "SÁNG TẠO",
     "PHÚT",
     "PHUT",
+    "TẢI GAME",
+    "TAI GAME",
+    "ĐẶC QUYỀN",
+    "DAC QUYEN",
+    "HOÀN THÀNH",
+    "HOAN THANH",
+    "HOA VIÊN",
+    "HOA VIEN",
+    "THẾ GIỚI",
+    "THE GIOI",
+    "CHÀO MỪNG",
+    "CHAO MUNG",
 ]
 
 

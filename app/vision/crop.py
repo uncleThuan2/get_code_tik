@@ -4,11 +4,11 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Default calibrated ratios based on stream screenshot
-# Small code region (e.g. w3qg8mz5)
-DEFAULT_SMALL_REGION = {"x1": 0.20, "y1": 0.12, "x2": 0.50, "y2": 0.30}
-# Large code region (e.g. R5XJV9VQ2 / CODE GIỚI HẠN)
-DEFAULT_LARGE_REGION = {"x1": 0.20, "y1": 0.25, "x2": 0.50, "y2": 0.40}
+# Precise calibrated ratios based on stream screenshot (Video stream in center container)
+# Small code region (w3qg8mz5 box)
+DEFAULT_SMALL_REGION = {"x1": 0.25, "y1": 0.15, "x2": 0.44, "y2": 0.25}
+# Large code region (R5XJV9VQ2 pink box)
+DEFAULT_LARGE_REGION = {"x1": 0.23, "y1": 0.25, "x2": 0.44, "y2": 0.35}
 
 
 def get_crop_box(img_size: Tuple[int, int], region_cfg: dict) -> Tuple[int, int, int, int]:
