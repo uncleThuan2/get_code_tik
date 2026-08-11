@@ -8,8 +8,8 @@ from app.vision.gemini_ocr import extract_codes_via_gemini_vision
 logger = logging.getLogger(__name__)
 
 
-def extract_all_codes_from_stream(stream_img: Image.Image) -> Tuple[List[str], List[str]]:
-    """Extract small and large reward codes directly from stream screenshot using Gemini 2.5 Flash Vision AI (2 Images + 1 Prompt).
+def extract_all_codes_from_stream(stream_data: bytes | Image.Image) -> Tuple[List[str], List[str]]:
+    """Extract small and large reward codes directly from stream screenshot bytes using Gemini 2.5 Flash Vision AI (2 Images + 1 Prompt).
 
     Returns:
         (small_codes: List[str], large_codes: List[str])
@@ -19,5 +19,5 @@ def extract_all_codes_from_stream(stream_img: Image.Image) -> Tuple[List[str], L
         logger.error("GEMINI_API_KEY environment variable is missing!")
         return [], []
 
-    logger.info("Extracting reward codes via Gemini 2.5 Flash Vision AI...")
-    return extract_codes_via_gemini_vision(stream_img, api_key=gemini_key)
+    logger.info("Extracting reward codes via Gemini 2.5 Flash Vision AI (In-Memory Stream Bytes)...")
+    return extract_codes_via_gemini_vision(stream_data, api_key=gemini_key)

@@ -57,6 +57,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SAMPLE_PUBLIC_URL: ${{ secrets.SAMPLE_PUBLIC_URL }}
         run: |
           python -m app.main
 

@@ -4,19 +4,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Optional
-from PIL import Image
 
 from app.config import load_config
 from app.tiktok.browser import TikTokBrowser
 from app.tiktok.live_detector import detect_live_session
-from app.tiktok.live_session import enter_and_capture_live_session, hide_tiktok_overlays, detect_and_handle_captcha
+from app.tiktok.live_session import hide_tiktok_overlays, detect_and_handle_captcha
 
 from app.vision.ocr import extract_all_codes_from_stream
 from app.vision.validator import is_valid_code
 
 from app.storage.daily_file import append_codes_to_daily_file
 from app.storage.duplicate_checker import filter_new_codes
-from app.storage.cleanup import cleanup_old_daily_files, cleanup_temp_screenshots
+from app.storage.cleanup import cleanup_old_daily_files
 
 from app.notification.telegram import notify_new_reward_codes
 
@@ -30,22 +29,20 @@ logger = logging.getLogger(__name__)
 
 
 async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_label: str):
-    """Direct single-pass capture: enter stream, take screenshot, extract codes via Gemini Vision AI, notify & exit."""
-    temp_img_path = Path("screenshots/frame_1.png")
-
-    logger.info("Capturing stream screenshot for Gemini Vision AI...")
+    """Direct single-pass capture: take in-memory screenshot bytes, upload to Catbox API, call Gemini Vision AI via URL, notify & exit."""
+    logger.info("Capturing in-memory stream screenshot for Gemini Vision AI (zero local file saves)...")
     await detect_and_handle_captcha(browser.page)
     await hide_tiktok_overlays(browser.page)
-    await browser.take_screenshot(temp_img_path)
+    
+    # Take screenshot directly in RAM as bytes (no disk file created)
+    img_bytes = await browser.page.screenshot(type="png")
 
-    if not temp_img_path.exists():
-        logger.error("Failed to capture stream screenshot frame.")
+    if not img_bytes:
+        logger.error("Failed to capture stream screenshot bytes.")
         return
 
-    img = Image.open(temp_img_path)
-
-    # Direct 2-Images + 1-Prompt Gemini Vision AI Extraction
-    small_codes_found, large_codes_found = extract_all_codes_from_stream(img)
+    # Direct 2-Images (Public URL Links) + 1-Prompt Gemini Vision AI Extraction
+    small_codes_found, large_codes_found = extract_all_codes_from_stream(img_bytes)
 
     logger.info(f"Gemini Vision Extracted -> Small Codes: {small_codes_found} | Large Codes: {large_codes_found}")
 
@@ -92,32 +89,21 @@ async def main():
             page_load_timeout=page_load_timeout,
         )
 
-        try:
-            await browser.take_screenshot("screenshots/status_check.png")
-        except Exception:
-            pass
-
         if is_live and live_url:
             logger.info(f"Account is LIVE! Entering stream: {live_url}")
             await page.goto(live_url, timeout=page_load_timeout * 1000, wait_until="domcontentloaded")
             await asyncio.sleep(3)
 
-            # Direct Gemini Vision AI Single Pass
+            # Direct Gemini Vision AI Single Pass (In-Memory Bytes)
             await run_ocr_stream_session(browser, config, time_label)
         else:
             logger.warning(f"Account {profile_url} was NOT LIVE during check window.")
-            try:
-                await browser.take_screenshot("screenshots/offline_check.png")
-            except Exception:
-                pass
 
     except Exception as e:
         logger.error(f"Execution error in main pipeline: {e}", exc_info=True)
     finally:
         await browser.close()
 
-    # Clean up temporary screenshots
-    cleanup_temp_screenshots()
     logger.info("Pipeline execution completed cleanly.")
 
 
