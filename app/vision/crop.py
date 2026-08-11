@@ -6,9 +6,9 @@ logger = logging.getLogger(__name__)
 
 # Precise calibrated ratios based on stream screenshot (Video stream in center container)
 # Small code region (w3qg8mz5 box)
-DEFAULT_SMALL_REGION = {"x1": 0.25, "y1": 0.15, "x2": 0.44, "y2": 0.25}
+DEFAULT_SMALL_REGION = {"x1": 0.34, "y1": 0.24, "x2": 0.47, "y2": 0.31}
 # Large code region (R5XJV9VQ2 pink box)
-DEFAULT_LARGE_REGION = {"x1": 0.23, "y1": 0.25, "x2": 0.44, "y2": 0.35}
+DEFAULT_LARGE_REGION = {"x1": 0.31, "y1": 0.31, "x2": 0.46, "y2": 0.37}
 
 
 def get_crop_box(img_size: Tuple[int, int], region_cfg: dict) -> Tuple[int, int, int, int]:
