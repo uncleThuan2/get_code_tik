@@ -6,6 +6,36 @@ from playwright.async_api import Page
 logger = logging.getLogger(__name__)
 
 
+async def hide_tiktok_overlays(page: Page):
+    """Hide TikTok player UI overlays (+ Follow banner, headers, popups) to reveal full stream video."""
+    try:
+        await page.evaluate("""() => {
+            const selectors = [
+                '[data-e2e="user-info"]',
+                '[class*="DivOwnerContainer"]',
+                '[class*="DivHeaderContainer"]',
+                '[class*="DivLivePlayerHeader"]',
+                'button[class*="ButtonFollow"]',
+                '[class*="FollowContainer"]',
+                '[class*="DivUserContainer"]',
+                '[class*="DivModal"]',
+                '[class*="DivLoginGuide"]',
+                '[class*="DivMask"]',
+                '[class*="login-container"]',
+                '[class*="DivBottomBanner"]'
+            ];
+            selectors.forEach(sel => {
+                document.querySelectorAll(sel).forEach(el => {
+                    el.style.display = 'none';
+                    el.style.visibility = 'hidden';
+                });
+            });
+        }""")
+        logger.info("Successfully hid TikTok player overlays.")
+    except Exception as e:
+        logger.warning(f"Failed to hide overlays: {e}")
+
+
 async def enter_and_capture_live_session(
     page: Page,
     live_url: str,
@@ -24,9 +54,15 @@ async def enter_and_capture_live_session(
     except Exception:
         logger.warning("Video selector timeout. Proceeding with rendering wait delay.")
 
-    # Additional delay to allow stream frames and UI overlay to settle
+    # Hide TikTok player overlays
+    await hide_tiktok_overlays(page)
+
+    # Additional delay to allow stream frames to settle
     logger.info(f"Waiting {render_delay_seconds} seconds for live video frame rendering...")
     await asyncio.sleep(render_delay_seconds)
+
+    # Re-apply overlay hiding right before screenshot
+    await hide_tiktok_overlays(page)
 
     # Save screenshot
     screenshot_file = Path(output_screenshot_path)
