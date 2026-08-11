@@ -33,6 +33,7 @@ class TikTokBrowser:
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
+                "--incognito",
             ],
         )
         self._context = await self._browser.new_context(
@@ -41,6 +42,12 @@ class TikTokBrowser:
             locale="vi-VN",
             timezone_id="Asia/Ho_Chi_Minh",
         )
+        # Stealth init script to mask automation flags & enforce incognito environment
+        await self._context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+            });
+        """)
         self._page = await self._context.new_page()
         self._page.set_default_timeout(30000)
         return self._page
