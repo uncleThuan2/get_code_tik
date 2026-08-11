@@ -37,7 +37,7 @@ async def hide_tiktok_overlays(page: Page):
                 });
             });
         }""")
-        logger.info("Successfully hid TikTok player overlays.")
+        logger.debug("Successfully hid TikTok player overlays.")
     except Exception as e:
         logger.warning(f"Failed to hide overlays: {e}")
 
