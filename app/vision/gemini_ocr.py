@@ -142,11 +142,12 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
 
     headers = {"Content-Type": "application/json"}
 
+    timeout_sec = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
     small_codes, large_codes = [], []
     for attempt in range(2):
         try:
-            logger.info(f"Sending Gemini Vision API request (attempt {attempt+1}/2)...")
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            logger.info(f"Sending Gemini Vision API request (attempt {attempt+1}/2, timeout={timeout_sec}s)...")
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
             res_json = response.json()
 
             if "error" in res_json:
@@ -167,7 +168,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                     break
 
         except requests.exceptions.ReadTimeout:
-            logger.warning(f"Gemini Vision API call timed out on attempt {attempt+1} (timeout=60s). Retrying...")
+            logger.warning(f"Gemini Vision API call timed out on attempt {attempt+1} (timeout={timeout_sec}s). Retrying...")
         except Exception as e:
             logger.error(f"Gemini Vision API call failed: {e}", exc_info=True)
             break
