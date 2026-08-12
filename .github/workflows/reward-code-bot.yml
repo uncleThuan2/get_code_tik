@@ -25,23 +25,28 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Cache Playwright Chromium Browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+
       - name: Install Playwright Chromium & system deps
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
           python -m playwright install chromium --with-deps
+
+      - name: Install Playwright System Dependencies Only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          python -m playwright install-deps chromium
 
       - name: Run TikTok Reward Code Bot
         env:
