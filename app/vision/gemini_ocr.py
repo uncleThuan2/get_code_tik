@@ -113,9 +113,9 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
     prompt = (
         "Image 1 is the reference sample UI layout showing where reward codes appear (yellow speech bubbles for small codes next to chests, and pink banner for large code). "
         "Image 2 (from Google File API URI) is the live stream screenshot. Compare Image 2 against Image 1 and extract: "
-        "1) All small reward codes visible in the yellow speech bubbles. "
-        "2) The large reward code in the pink banner if released. If the pink banner says 'Sắp xuất hiện' or is not released, do not include it in large_codes. "
-        "\nCRITICAL OCR CHARACTER ACCURACY & CASE-SENSITIVITY INSTRUCTIONS:\n"
+        "1) All small reward codes visible in the yellow speech bubbles. Preserve exact character casing (e.g. 'w3qg8mz5'). "
+        "2) The large reward code in the pink banner if released. IMPORTANT: Large Codes in this game are ALWAYS 100% UPPERCASE letters and digits (e.g., 'HN9KJMEW', 'R5XJV9VQ2', 'K9X3P7WB'). Ensure all letters in large_codes are UPPERCASE. If the pink banner says 'Sắp xuất hiện' or is not released, do not include it in large_codes. "
+        "\nCRITICAL OCR CHARACTER ACCURACY INSTRUCTIONS:\n"
         "- Inspect each character stroke with extreme precision to prevent confusing similar shapes:\n"
         "  * 'J' (curved bottom hook) vs 'I' (straight vertical line) / 'L' (right-angle base).\n"
         "  * 'E' (3 horizontal parallel bars) vs 'B' (2 closed rounded loops) / '8'.\n"
@@ -126,8 +126,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         "  * 'g' (lowercase g with descender) vs '9' (number nine) vs 'q'.\n"
         "  * 'u' (lowercase u) vs 'v' (lowercase v) vs 'U' / 'V'.\n"
         "  * 'w' (lowercase w) vs 'vv' (two v's) vs 'W' (uppercase W).\n"
-        "- EXACT CASING: Differentiate lowercase letters (a..z) vs uppercase letters (A..Z) based on relative height and stroke style (e.g. 'w3qg8mz5').\n"
-        "- Return ONLY a valid JSON object with format: {\"small_codes\": [\"code1\", \"code2\"], \"large_codes\": [\"code3\"]}"
+        "- Return ONLY a valid JSON object with format: {\"small_codes\": [\"code1\", \"code2\"], \"large_codes\": [\"CODE3\"]}"
     )
 
     parts = [{"text": prompt}]
@@ -177,7 +176,8 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                         large_codes = parsed.get("large_codes", [])
 
                         small_codes = [s.strip() for s in small_codes if isinstance(s, str) and s.strip()]
-                        large_codes = [l.strip() for l in large_codes if isinstance(l, str) and l.strip()]
+                        # Large codes in this game are ALWAYS 100% UPPERCASE
+                        large_codes = [l.strip().upper() for l in large_codes if isinstance(l, str) and l.strip()]
                         break
 
             except requests.exceptions.ReadTimeout:
