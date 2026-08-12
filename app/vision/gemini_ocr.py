@@ -143,27 +143,34 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
     headers = {"Content-Type": "application/json"}
 
     small_codes, large_codes = [], []
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=20)
-        res_json = response.json()
+    for attempt in range(2):
+        try:
+            logger.info(f"Sending Gemini Vision API request (attempt {attempt+1}/2)...")
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            res_json = response.json()
 
-        if "error" in res_json:
-            logger.error(f"Gemini API Error: {res_json['error']}")
-        else:
-            candidates = res_json.get("candidates", [])
-            if candidates:
-                content_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                logger.info(f"Gemini AI Raw Response: {content_text}")
+            if "error" in res_json:
+                logger.error(f"Gemini API Error: {res_json['error']}")
+                break
+            else:
+                candidates = res_json.get("candidates", [])
+                if candidates:
+                    content_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    logger.info(f"Gemini AI Raw Response: {content_text}")
 
-                parsed = json.loads(content_text)
-                small_codes = parsed.get("small_codes", [])
-                large_codes = parsed.get("large_codes", [])
+                    parsed = json.loads(content_text)
+                    small_codes = parsed.get("small_codes", [])
+                    large_codes = parsed.get("large_codes", [])
 
-                small_codes = [s.strip() for s in small_codes if isinstance(s, str) and s.strip()]
-                large_codes = [l.strip() for l in large_codes if isinstance(l, str) and l.strip()]
+                    small_codes = [s.strip() for s in small_codes if isinstance(s, str) and s.strip()]
+                    large_codes = [l.strip() for l in large_codes if isinstance(l, str) and l.strip()]
+                    break
 
-    except Exception as e:
-        logger.error(f"Gemini Vision API call failed: {e}", exc_info=True)
+        except requests.exceptions.ReadTimeout:
+            logger.warning(f"Gemini Vision API call timed out on attempt {attempt+1} (timeout=60s). Retrying...")
+        except Exception as e:
+            logger.error(f"Gemini Vision API call failed: {e}", exc_info=True)
+            break
     finally:
         # Immediately delete temporary file from Google File API server after process
         if file_name:
