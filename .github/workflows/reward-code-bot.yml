@@ -2,13 +2,12 @@ name: TikTok Reward Code Bot
 
 on:
   schedule:
-    # Schedule runs at offset minutes around code release slots:
-    # 18:35, 19:35, 20:35, 21:35 ICT (Asia/Ho_Chi_Minh = UTC+7)
-    # Corresponding UTC times: 11:35, 12:35, 13:35, 14:35 UTC
-    - cron: '35 11 * * *'
-    - cron: '35 12 * * *'
-    - cron: '35 13 * * *'
-    - cron: '35 14 * * *'
+    # Schedule runs at 18:31, 19:31, 20:31, 21:31 ICT (Asia/Ho_Chi_Minh = UTC+7)
+    # Corresponding UTC times: 11:31, 12:31, 13:31, 14:31 UTC
+    - cron: '31 11 * * *'
+    - cron: '31 12 * * *'
+    - cron: '31 13 * * *'
+    - cron: '31 14 * * *'
   workflow_dispatch:
 
 permissions:
