@@ -42,7 +42,7 @@ async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_labe
         return
 
     # Direct 2-Images (Public URL Links) + 1-Prompt Gemini Vision AI Extraction
-    small_codes_found, large_codes_found = extract_all_codes_from_stream(img_bytes)
+    small_codes_found, large_codes_found, sample_cropped_bytes = extract_all_codes_from_stream(img_bytes)
 
     logger.info(f"Gemini Vision Extracted -> Small Codes: {small_codes_found} | Large Codes: {large_codes_found}")
 
@@ -53,7 +53,7 @@ async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_labe
     if new_small or new_large:
         logger.info(f"New Reward Codes Detected! Small: {new_small} | Large: {new_large}")
         append_codes_to_daily_file(time_label, new_small, new_large)
-        notify_new_reward_codes(time_label, new_small, new_large)
+        notify_new_reward_codes(time_label, new_small, new_large, sample_cropped_bytes)
     else:
         logger.info("No new non-duplicate codes detected.")
 

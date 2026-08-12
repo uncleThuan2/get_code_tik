@@ -28,7 +28,6 @@ def upload_to_google_file_api(img_data: bytes | Image.Image, api_key: str) -> Tu
 
         upload_url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
         
-        # Resumable / Multipart Upload Protocol for Google File API
         headers = {
             "X-Goog-Upload-Protocol": "multipart"
         }
@@ -46,8 +45,8 @@ def upload_to_google_file_api(img_data: bytes | Image.Image, api_key: str) -> Tu
 
         if response.status_code == 200 and "file" in res_json:
             file_info = res_json["file"]
-            file_name = file_info.get("name", "")  # "files/abc123xyz"
-            file_uri = file_info.get("uri", "")   # "https://generativelanguage.googleapis.com/files/abc123xyz"
+            file_name = file_info.get("name", "")
+            file_uri = file_info.get("uri", "")
             logger.info(f"Google File API Upload Success: {file_name} -> {file_uri}")
             return file_name, file_uri
         else:
@@ -87,16 +86,53 @@ def get_sample_image_base64() -> str:
     return ""
 
 
-def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api_key: str = None) -> Tuple[List[str], List[str]]:
-    """Extract small and large reward codes using Gemini 2.5 Flash Vision AI:
-    - Image 1: Sample reference UI layout (Base64)
-    - Image 2: Official Google File API uploaded stream screenshot URI (file_uri)
-    - Auto-deletes screenshot from Google File API after extraction.
+def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[int]], padding_percent: float = 0.04) -> bytes | None:
+    """Crop 1 SINGLE combined image region covering ALL detected code regions (matching sample layout region)."""
+    valid_boxes = [b for b in boxes if isinstance(b, list) and len(b) == 4]
+    if not img_data or not valid_boxes:
+        return None
+
+    try:
+        if isinstance(img_data, Image.Image):
+            img = img_data.copy()
+        else:
+            img = Image.open(io.BytesIO(img_data))
+
+        width, height = img.size
+
+        # Find 1 single bounding box that encompasses ALL codes
+        min_ymin = min(b[0] for b in valid_boxes)
+        min_xmin = min(b[1] for b in valid_boxes)
+        max_ymax = max(b[2] for b in valid_boxes)
+        max_xmax = max(b[3] for b in valid_boxes)
+
+        # Add padding around the combined bounding box
+        pad_y = int(height * padding_percent)
+        pad_x = int(width * padding_percent)
+
+        left = max(0, int((min_xmin / 1000.0) * width) - pad_x)
+        top = max(0, int((min_ymin / 1000.0) * height) - pad_y)
+        right = min(width, int((max_xmax / 1000.0) * width) + pad_x)
+        bottom = min(height, int((max_ymax / 1000.0) * height) + pad_y)
+
+        cropped = img.crop((left, top, right, bottom))
+        buf = io.BytesIO()
+        cropped.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"Failed to crop combined bounding box: {e}")
+        return None
+
+
+def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api_key: str = None) -> Tuple[List[str], List[str], bytes | None]:
+    """Extract small and large reward codes with bounding boxes, returning 1 single cropped sample image region:
+    Returns:
+        (small_codes: List[str], large_codes: List[str], sample_cropped_bytes: bytes | None)
     """
     key = api_key or os.getenv("GEMINI_API_KEY")
     if not key:
         logger.warning("GEMINI_API_KEY environment variable not provided.")
-        return [], []
+        return [], [], None
 
     file_name, file_uri = "", ""
     if stream_data:
@@ -104,40 +140,45 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
 
     if not file_uri:
         logger.error("Failed to obtain valid Google File API URI for screenshot.")
-        return [], []
+        return [], [], None
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
 
     sample_b64 = get_sample_image_base64()
 
     prompt = (
-        "Image 1 is the reference sample UI layout showing where reward codes appear (yellow speech bubbles for small codes next to chests, and pink banner for large code). "
-        "Image 2 (from Google File API URI) is the live stream screenshot. Compare Image 2 against Image 1 and extract: "
-        "1) All small reward codes visible in the yellow speech bubbles. Preserve exact character casing (e.g. 'w3qg8mz5'). "
-        "2) The large reward code in the pink banner if released. IMPORTANT: Large Codes in this game are ALWAYS 100% UPPERCASE letters and digits (e.g., 'HN9KJMEW', 'R5XJV9VQ2', 'K9X3P7WB'). Ensure all letters in large_codes are UPPERCASE. If the pink banner says 'Sắp xuất hiện' or is not released, do not include it in large_codes. "
+        "Image 1 is the reference sample UI layout showing the entire reward panel area (containing vertical chest progress column on the left, yellow speech bubbles for small codes, and the bottom pink banner for large code). "
+        "Image 2 (from Google File API URI) is the live stream screenshot. Compare Image 2 against Image 1 and perform two tasks:\n"
+        "1) Identify the 1 single overall bounding box [ymin, xmin, ymax, xmax] (normalized 0-1000 scale) on Image 2 that covers the ENTIRE UI panel area exactly matching Image 1's sample layout.\n"
+        "2) Extract all reward codes visible inside that UI area:\n"
+        "   - All small reward codes in yellow speech bubbles (preserve exact letter casing, e.g. 'w3qg8mz5').\n"
+        "   - The large reward code in the pink banner if released (ALWAYS 100% UPPERCASE, e.g. 'HN9KJMEW').\n"
         "\nCRITICAL OCR CHARACTER ACCURACY & SEQUENCING INSTRUCTIONS:\n"
-        "- STRICT LEFT-TO-RIGHT ORDERING: Read characters STRICTLY from LEFT to RIGHT in exact sequence. NEVER scramble, swap, or transpose adjacent characters (e.g. 'wp8' must NOT be transposed into 'p8w'). Trace character positions carefully from left to right.\n"
+        "- STRICT LEFT-TO-RIGHT ORDERING: Read characters STRICTLY from LEFT to RIGHT in exact sequence. NEVER scramble or swap adjacent characters.\n"
         "- Inspect each character stroke with extreme precision to prevent confusing similar shapes:\n"
         "  * 'f' (lowercase f with top curve and crossbar) vs '1' (number one with straight top serif).\n"
         "  * 'J' (curved bottom hook) vs 'I' (straight vertical line) / 'L' (right-angle base).\n"
         "  * 'E' (3 horizontal parallel bars) vs 'B' (2 closed rounded loops) / '8'.\n"
-        "  * '0' (number zero) vs 'O' (uppercase letter O) vs 'o' (lowercase letter o).\n"
-        "  * '1' (number one) vs 'I' (uppercase i) vs 'l' (lowercase L) vs 'f' (lowercase f).\n"
-        "  * '5' (number five) vs 'S' (uppercase S) vs 's' (lowercase s).\n"
-        "  * '8' (number eight) vs 'B' (uppercase B).\n"
-        "  * 'g' (lowercase g with descender) vs '9' (number nine) vs 'q'.\n"
+        "  * '0' (zero) vs 'O' (uppercase O) vs 'o' (lowercase o).\n"
+        "  * '1' (one) vs 'I' (uppercase i) vs 'l' (lowercase L) vs 'f' (lowercase f).\n"
+        "  * '5' (five) vs 'S' (uppercase S) vs 's' (lowercase s).\n"
+        "  * '8' (eight) vs 'B' (uppercase B).\n"
+        "  * 'g' (lowercase g with descender) vs '9' (nine) vs 'q'.\n"
         "  * 'u' (lowercase u) vs 'v' (lowercase v) vs 'U' / 'V'.\n"
         "  * 'w' (lowercase w) vs 'vv' (two v's) vs 'W' (uppercase W).\n"
-        "- Return ONLY a valid JSON object with format: {\"small_codes\": [\"code1\", \"code2\"], \"large_codes\": [\"CODE3\"]}"
+        "- Return ONLY a valid JSON object with format:\n"
+        "{\n"
+        "  \"ui_box_2d\": [ymin, xmin, ymax, xmax],\n"
+        "  \"small_codes\": [\"w3qg8mz5\"],\n"
+        "  \"large_codes\": [\"HN9KJMEW\"]\n"
+        "}"
     )
 
     parts = [{"text": prompt}]
 
-    # Attach Image 1: Sample reference image
     if sample_b64:
         parts.append({"inline_data": {"mime_type": "image/png", "data": sample_b64}})
 
-    # Attach Image 2: Official Google File API URI
     parts.append({
         "file_data": {
             "file_uri": file_uri,
@@ -157,6 +198,9 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
 
     timeout_sec = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
     small_codes, large_codes = [], []
+    all_boxes = []
+    sample_cropped_bytes = None
+
     try:
         for attempt in range(2):
             try:
@@ -174,12 +218,16 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                         logger.info(f"Gemini AI Raw Response: {content_text}")
 
                         parsed = json.loads(content_text)
-                        small_codes = parsed.get("small_codes", [])
-                        large_codes = parsed.get("large_codes", [])
+                        ui_box = parsed.get("ui_box_2d")
+                        raw_small = parsed.get("small_codes", [])
+                        raw_large = parsed.get("large_codes", [])
 
-                        small_codes = [s.strip() for s in small_codes if isinstance(s, str) and s.strip()]
-                        # Large codes in this game are ALWAYS 100% UPPERCASE
-                        large_codes = [l.strip().upper() for l in large_codes if isinstance(l, str) and l.strip()]
+                        small_codes = [s.strip() for s in raw_small if isinstance(s, str) and s.strip()]
+                        large_codes = [l.strip().upper() for l in raw_large if isinstance(l, str) and l.strip()]
+
+                        if stream_data and ui_box and isinstance(ui_box, list) and len(ui_box) == 4:
+                            sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
+
                         break
 
             except requests.exceptions.ReadTimeout:
@@ -188,8 +236,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                 logger.error(f"Gemini Vision API call failed: {e}", exc_info=True)
                 break
     finally:
-        # Immediately delete temporary file from Google File API server after process
         if file_name:
             delete_from_google_file_api(file_name, key)
 
-    return small_codes, large_codes
+    return small_codes, large_codes, sample_cropped_bytes
