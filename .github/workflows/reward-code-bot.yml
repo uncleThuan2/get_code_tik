@@ -1,14 +1,15 @@
 name: TikTok Reward Code Bot
 
 on:
+  # Primary trigger: cron-job.org Webhook via API (0% delay, exact to the second)
+  workflow_dispatch:
+
+  # Secondary fallback trigger: GitHub Actions built-in schedule
   schedule:
-    # Schedule runs at 18:31, 19:31, 20:31, 21:31 ICT (Asia/Ho_Chi_Minh = UTC+7)
-    # Corresponding UTC times: 11:31, 12:31, 13:31, 14:31 UTC
     - cron: '31 11 * * *'
     - cron: '31 12 * * *'
     - cron: '31 13 * * *'
     - cron: '31 14 * * *'
-  workflow_dispatch:
 
 permissions:
   contents: write
