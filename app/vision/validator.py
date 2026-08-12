@@ -54,11 +54,10 @@ BLACKLISTED_SUBSTRINGS = [
 
 
 def clean_ocr_text(text: str) -> str:
-    """Normalize raw OCR text by removing spaces, punctuation, and newlines."""
+    """Normalize raw OCR text by removing spaces, punctuation, and newlines while preserving letter casing."""
     if not text:
         return ""
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", text)
-    return cleaned.upper()
+    return re.sub(r"[^A-Za-z0-9]", "", text)
 
 
 def is_not_released(raw_text: str) -> bool:
@@ -92,8 +91,9 @@ def is_valid_code(candidate: str) -> bool:
         return False
 
     # Reject blacklisted UI substrings
+    cleaned_upper = cleaned.upper()
     for bad in BLACKLISTED_SUBSTRINGS:
-        if bad in cleaned:
+        if bad in cleaned_upper:
             return False
 
     # Reward codes in this game must contain both letters and digits
