@@ -113,9 +113,9 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
     prompt = (
         "Image 1 is the reference sample UI layout showing where reward codes appear (yellow speech bubbles for small codes next to chests, and pink banner for large code). "
         "Image 2 (from Google File API URI) is the live stream screenshot. Compare Image 2 against Image 1 and extract: "
-        "1) All small reward codes visible in the yellow speech bubbles. "
-        "2) The large reward code in the pink banner if released. If the pink banner says 'Sắp xuất hiện' or is not released, do not include it in large_codes. "
-        "Return ONLY a valid JSON object with format: {\"small_codes\": [\"CODE1\", \"CODE2\"], \"large_codes\": [\"CODE3\"]}"
+        "1) All small reward codes visible in the yellow speech bubbles. PRESERVE THE EXACT CHARACTER CASING (lowercase vs uppercase letters) as shown in the image (e.g. 'w3qg8mz5'). "
+        "2) The large reward code in the pink banner if released, preserving exact letter casing. If the pink banner says 'Sắp xuất hiện' or is not released, do not include it in large_codes. "
+        "Return ONLY a valid JSON object with format: {\"small_codes\": [\"code1\", \"code2\"], \"large_codes\": [\"code3\"]}"
     )
 
     parts = [{"text": prompt}]
@@ -159,8 +159,8 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                 small_codes = parsed.get("small_codes", [])
                 large_codes = parsed.get("large_codes", [])
 
-                small_codes = [s.strip().upper() for s in small_codes if isinstance(s, str) and s.strip()]
-                large_codes = [l.strip().upper() for l in large_codes if isinstance(l, str) and l.strip()]
+                small_codes = [s.strip() for s in small_codes if isinstance(s, str) and s.strip()]
+                large_codes = [l.strip() for l in large_codes if isinstance(l, str) and l.strip()]
 
     except Exception as e:
         logger.error(f"Gemini Vision API call failed: {e}", exc_info=True)
