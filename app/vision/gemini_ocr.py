@@ -28,6 +28,7 @@ def upload_to_google_file_api(img_data: bytes | Image.Image, api_key: str) -> Tu
 
         upload_url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
         
+        # Resumable / Multipart Upload Protocol for Google File API
         headers = {
             "X-Goog-Upload-Protocol": "multipart"
         }
@@ -45,8 +46,8 @@ def upload_to_google_file_api(img_data: bytes | Image.Image, api_key: str) -> Tu
 
         if response.status_code == 200 and "file" in res_json:
             file_info = res_json["file"]
-            file_name = file_info.get("name", "")
-            file_uri = file_info.get("uri", "")
+            file_name = file_info.get("name", "")  # "files/abc123xyz"
+            file_uri = file_info.get("uri", "")   # "https://generativelanguage.googleapis.com/files/abc123xyz"
             logger.info(f"Google File API Upload Success: {file_name} -> {file_uri}")
             return file_name, file_uri
         else:
@@ -87,9 +88,10 @@ def get_sample_image_base64() -> str:
 
 
 def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api_key: str = None) -> Tuple[List[str], List[str]]:
-    """Extract small and large reward codes using Gemini 2.5 Flash Vision AI (2 Images + 1 Prompt).
-    Returns:
-        (small_codes: List[str], large_codes: List[str])
+    """Extract small and large reward codes using Gemini 2.5 Flash Vision AI:
+    - Image 1: Sample reference UI layout (Base64)
+    - Image 2: Official Google File API uploaded stream screenshot URI (file_uri)
+    - Auto-deletes screenshot from Google File API after extraction.
     """
     key = api_key or os.getenv("GEMINI_API_KEY")
     if not key:
@@ -114,7 +116,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         "1) All small reward codes visible in the yellow speech bubbles. Preserve exact character casing (e.g. 'w3qg8mz5'). "
         "2) The large reward code in the pink banner if released. IMPORTANT: Large Codes in this game are ALWAYS 100% UPPERCASE letters and digits (e.g., 'HN9KJMEW', 'R5XJV9VQ2', 'K9X3P7WB'). Ensure all letters in large_codes are UPPERCASE. If the pink banner says 'Sắp xuất hiện' or is not released, do not include it in large_codes. "
         "\nCRITICAL OCR CHARACTER ACCURACY & SEQUENCING INSTRUCTIONS:\n"
-        "- STRICT LEFT-TO-RIGHT ORDERING: Read characters STRICTLY from LEFT to RIGHT in exact sequence. NEVER scramble or swap adjacent characters.\n"
+        "- STRICT LEFT-TO-RIGHT ORDERING: Read characters STRICTLY from LEFT to RIGHT in exact sequence. NEVER scramble, swap, or transpose adjacent characters (e.g. 'wp8' must NOT be transposed into 'p8w'). Trace character positions carefully from left to right.\n"
         "- Inspect each character stroke with extreme precision to prevent confusing similar shapes:\n"
         "  * 'f' (lowercase f with top curve and crossbar) vs '1' (number one with straight top serif).\n"
         "  * 'J' (curved bottom hook) vs 'I' (straight vertical line) / 'L' (right-angle base).\n"
@@ -131,9 +133,11 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
 
     parts = [{"text": prompt}]
 
+    # Attach Image 1: Sample reference image
     if sample_b64:
         parts.append({"inline_data": {"mime_type": "image/png", "data": sample_b64}})
 
+    # Attach Image 2: Official Google File API URI
     parts.append({
         "file_data": {
             "file_uri": file_uri,
@@ -174,6 +178,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                         large_codes = parsed.get("large_codes", [])
 
                         small_codes = [s.strip() for s in small_codes if isinstance(s, str) and s.strip()]
+                        # Large codes in this game are ALWAYS 100% UPPERCASE
                         large_codes = [l.strip().upper() for l in large_codes if isinstance(l, str) and l.strip()]
                         break
 
@@ -183,6 +188,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                 logger.error(f"Gemini Vision API call failed: {e}", exc_info=True)
                 break
     finally:
+        # Immediately delete temporary file from Google File API server after process
         if file_name:
             delete_from_google_file_api(file_name, key)
 

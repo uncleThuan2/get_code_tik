@@ -53,7 +53,7 @@ async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_labe
     if new_small or new_large:
         logger.info(f"New Reward Codes Detected! Small: {new_small} | Large: {new_large}")
         append_codes_to_daily_file(time_label, new_small, new_large)
-        notify_new_reward_codes(time_label, new_small, new_large, img_bytes)
+        notify_new_reward_codes(time_label, new_small, new_large)
     else:
         logger.info("No new non-duplicate codes detected.")
 

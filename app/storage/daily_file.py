@@ -51,17 +51,15 @@ def append_codes_to_daily_file(
 
     content_lines.append("Small Code:")
     if small_codes:
-        for item in small_codes:
-            code_str = item.get("code", "") if isinstance(item, dict) else str(item)
-            content_lines.append(code_str)
+        for code in small_codes:
+            content_lines.append(code)
     else:
         content_lines.append("NOT_FOUND")
 
     content_lines.append("\nLarge Code:")
     if large_codes:
-        for item in large_codes:
-            code_str = item.get("code", "") if isinstance(item, dict) else str(item)
-            content_lines.append(code_str)
+        for code in large_codes:
+            content_lines.append(code)
     else:
         content_lines.append("NOT_FOUND")
 
