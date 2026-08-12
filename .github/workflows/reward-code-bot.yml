@@ -4,13 +4,6 @@ on:
   # Primary trigger: cron-job.org Webhook via API (0% delay, exact to the second)
   workflow_dispatch:
 
-  # Secondary fallback trigger: GitHub Actions built-in schedule
-  schedule:
-    - cron: '31 11 * * *'
-    - cron: '31 12 * * *'
-    - cron: '31 13 * * *'
-    - cron: '31 14 * * *'
-
 permissions:
   contents: write
 
