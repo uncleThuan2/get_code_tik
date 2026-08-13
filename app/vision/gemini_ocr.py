@@ -19,9 +19,6 @@ def _get_gemini_model_candidates() -> List[str]:
     candidates = [configured] if configured else []
     fallback_models = [
         "gemini-2.5-flash",
-        "gemini-2.5-flash-preview-05-06",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
     ]
 
     for model in fallback_models:
