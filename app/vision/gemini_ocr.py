@@ -228,21 +228,169 @@ def detect_ui_box_via_gemini_vision(stream_data: bytes | Image.Image, api_key: s
     if not file_uri:
         logger.error("Failed to obtain valid Google File API URI for screenshot detection step.")
         return []
+    with Image.open(stream_data) as img:
+        live_width, live_height = img.size
 
     try:
-        prompt = (
-            "Compare the reference sample and the live screenshot. "
-            "Find the single reward-panel area in the live screenshot that matches the reference layout. "
-            "Return ONLY a JSON object in this exact format: {\"ui_box_2d\": [x1, y1, x2, y2]} using the image's actual pixel coordinates, not normalized 0..1000 values. "
-            "Use the real screenshot size: x and y are pixel positions in the full image. "
-            "The box should tightly cover the full reward-panel region, including the left chest column, reward bubble area, and the large reward banner. "
-            "Do not guess; if the match is unclear, return {\"ui_box_2d\": []}."
-        )
+        prompt = f"""
+        You are performing precise visual localization on a screenshot.
+
+        You are given TWO images.
+
+        IMAGE 1 — LIVE SCREENSHOT:
+        - This is the original full screenshot captured from the browser.
+        - Original dimensions:
+        WIDTH = {live_width}
+        HEIGHT = {live_height}
+        - All coordinates MUST refer to this original image.
+
+        IMAGE 2 — REFERENCE IMAGE:
+        - This is a cropped reference image of the reward panel.
+        - The reference image has been resized/enlarged and may have a different scale from the corresponding region in IMAGE 1.
+        - DO NOT assume that IMAGE 2 has the same pixel scale or dimensions as the target region in IMAGE 1.
+        - Use IMAGE 2 only as a visual reference for identifying the target structure.
+
+        TASK:
+
+        Find the reward-panel region in IMAGE 1 that visually corresponds to IMAGE 2.
+
+        The target reward panel is the complete reward UI area shown in the reference image.
+
+        It contains:
+        1. The vertical column of reward/chest icons on the left.
+        2. The reward amount/bubble area.
+        3. The large reward-code banner below the reward icons.
+        4. The surrounding decorative/background area that belongs to the same reward panel.
+
+        IMPORTANT MATCHING RULES:
+
+        - The reward codes are DYNAMIC and may be different between screenshots.
+        - DO NOT use the actual code characters as the primary matching feature.
+        - Ignore differences in the code text.
+        - Focus on stable visual elements:
+        - reward/chest icons
+        - icon positions
+        - spacing
+        - panel borders
+        - shapes
+        - decorative elements
+        - background structure
+        - relative positions of all elements
+        - IMAGE 2 is a resized/enlarged crop.
+        - You MUST account for the scale difference between IMAGE 1 and IMAGE 2.
+        - DO NOT copy IMAGE 2's pixel dimensions into the result.
+        - DO NOT assume a 1:1 pixel correspondence between the two images.
+
+        COORDINATE SYSTEM:
+
+        Use ONLY the original pixel coordinate system of IMAGE 1.
+
+        The top-left pixel of IMAGE 1 is:
+
+        (0, 0)
+
+        X increases from left to right.
+        Y increases from top to bottom.
+
+        Return:
+
+        [x1, y1, x2, y2]
+
+        where:
+
+        x1 = left edge of the complete reward panel
+        y1 = top edge of the complete reward panel
+        x2 = right edge of the complete reward panel
+        y2 = bottom edge of the complete reward panel
+
+        The bounding box must tightly contain the COMPLETE reward panel.
+
+        Do NOT include:
+        - TikTok chat
+        - TikTok sidebar
+        - video player controls
+        - unrelated UI
+        - large empty areas outside the reward panel
+
+        Do NOT crop any part of the reward panel.
+
+        VISUAL VERIFICATION:
+
+        Before returning coordinates:
+
+        1. Identify the reward-panel structure in IMAGE 2.
+        2. Ignore IMAGE 2's absolute pixel dimensions.
+        3. Find the same visual structure in IMAGE 1.
+        4. Verify multiple independent landmarks:
+        - reward/chest column
+        - spacing between reward icons
+        - reward bubble/banner
+        - panel borders
+        - decorative background
+        - relative positions of these elements
+        5. Determine the bounding box only after these landmarks match.
+        6. Verify that all coordinates are inside IMAGE 1.
+
+        Coordinate constraints:
+
+        0 <= x1 < x2 <= {live_width}
+        0 <= y1 < y2 <= {live_height}
+
+        IMPORTANT:
+
+        Do NOT return normalized coordinates.
+
+        Do NOT use the 0-1000 coordinate system.
+
+        Do NOT use coordinates relative to IMAGE 2.
+
+        Do NOT use coordinates from a resized version of IMAGE 1.
+
+        Use the ORIGINAL PIXEL COORDINATES of IMAGE 1.
+
+        If the target reward panel cannot be identified with high confidence, DO NOT GUESS.
+
+        Return:
+
+        {{"ui_box_2d":[]}}
+
+        OUTPUT FORMAT:
+
+        Return ONLY a valid JSON object.
+
+        If detected:
+
+        {{"ui_box_2d":[x1,y1,x2,y2]}}
+
+        If not confidently detected:
+
+        {{"ui_box_2d":[]}}
+
+        Do not return markdown.
+        Do not return code fences.
+        Do not return explanations.
+        Do not return confidence scores.
+        Do not return any additional fields.
+        """
 
         parts = [{"text": prompt}]
+
+        # IMAGE 1: LIVE screenshot
+        parts.append({
+            "file_data": {
+                "file_uri": file_uri,
+                "mime_type": "image/png"
+            }
+        })
+
+        # IMAGE 2: Reference/sample image
         if sample_reference:
-            parts.append({"file_data": {"file_uri": sample_reference, "mime_type": "image/png"}})
-        parts.append({"file_data": {"file_uri": file_uri, "mime_type": "image/png"}})
+            parts.append({
+                "file_data": {
+                    "file_uri": sample_reference,
+                    "mime_type": "image/png"
+                }
+            })
 
         payload = {
             "contents": [{"parts": parts}],
@@ -337,25 +485,98 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
     try:
         prompt = (
             "You are given exactly ONE image only: the cropped reward-panel image. "
-            "Use the image content itself as the source of truth. "
-            "Read only the reward codes inside the valid panel area: yellow small-code bubbles, and the large pink banner at the bottom. "
-            "Preserve exact letter casing for small codes and uppercase for large codes. "        
-            "- STRICT LEFT-TO-RIGHT ORDERING: Read characters STRICTLY from LEFT to RIGHT in exact sequence. NEVER scramble or swap adjacent characters.\n"
-            "- Inspect each character stroke with extreme precision to prevent confusing similar shapes:\n"
-            "  * 'f' (lowercase f with top curve and crossbar) vs '1' (number one with straight top serif).\n"
-            "  * 'J' (curved bottom hook) vs 'I' (straight vertical line) / 'L' (right-angle base).\n"
-            "  * 'E' (3 horizontal parallel bars) vs 'B' (2 closed rounded loops) / '8'.\n"
-            "  * '0' (zero) vs 'O' (uppercase O) vs 'o' (lowercase o).\n"
-            "  * '1' (one) vs 'I' (uppercase i) vs 'l' (lowercase L) vs 'f' (lowercase f).\n"
-            "  * '5' (five) vs 'S' (uppercase S) vs 's' (lowercase s).\n"
-            "  * '8' (eight) vs 'B' (uppercase B).\n"
-            "  * 'g' (lowercase g with descender) vs '9' (nine) vs 'q'.\n"
-            "  * 'u' (lowercase u) vs 'v' (lowercase v) vs 'U' / 'V'.\n"
-            "  * 'w' (lowercase w) vs 'vv' (two v's) vs 'W' (uppercase W).\n"
-            "- A small code can contain lowercase and digits, but only read what is actually visible.\n"
-            "- The large banner code is always uppercase if it is visible.\n"
-            "Return ONLY valid JSON in this exact schema: {\"small_codes\": [], \"large_codes\": []}. "
-            "Do not invent values, do not use sample text as fallback, and do not include any extra text outside JSON."
+            "Use ONLY the visible image content as the source of truth. "
+            "Do NOT use external knowledge, previous screenshots, sample images, or expected code patterns. "
+            "\n\n"
+
+            "TASK: "
+            "Extract every currently visible reward code from the cropped reward panel. "
+            "\n\n"
+
+            "There are TWO types of reward codes: "
+            "1. SMALL CODES: codes displayed inside the yellow reward bubbles. "
+            "2. LARGE CODES: the code displayed inside the large pink banner at the bottom. "
+            "\n\n"
+
+            "IMPORTANT — CODE BOUNDARIES: "
+            "Only read characters that are actually inside a valid reward-code area. "
+            "Do NOT read surrounding UI text, labels, numbers, icons, usernames, counters, or decorative text. "
+            "Do NOT combine characters from different bubbles into one code. "
+            "Each yellow bubble represents one separate small code. "
+            "The pink banner represents one large code. "
+            "\n\n"
+
+            "IMPORTANT — EXACT CHARACTER RECOGNITION: "
+            "Read every code character strictly from LEFT TO RIGHT in its visual order. "
+            "Never reorder, swap, reverse, or rearrange characters. "
+            "The position of every character in the output must exactly match its position in the image. "
+            "\n\n"
+
+            "Inspect each character individually before producing the final result. "
+            "Pay special attention to visually similar characters, including: "
+            "'f' vs '1', "
+            "'J' vs 'I' vs 'L', "
+            "'E' vs 'B' vs '8', "
+            "'0' vs 'O' vs 'o', "
+            "'1' vs 'I' vs 'l' vs 'f', "
+            "'5' vs 'S' vs 's', "
+            "'8' vs 'B', "
+            "'g' vs '9' vs 'q', "
+            "'u' vs 'v' vs 'U' vs 'V', "
+            "'w' vs 'vv' vs 'W'. "
+            "\n\n"
+
+            "Do NOT automatically normalize ambiguous characters. "
+            "If the image clearly shows lowercase, preserve lowercase. "
+            "If the image clearly shows uppercase, preserve uppercase. "
+            "If the image clearly shows a digit, preserve the digit. "
+            "\n\n"
+
+            "SMALL CODE RULES: "
+            "Small codes may contain lowercase letters, uppercase letters, and digits. "
+            "Preserve the exact visible casing. "
+            "Do not convert lowercase to uppercase. "
+            "Do not convert uppercase to lowercase. "
+            "Do not replace letters with digits or digits with letters unless the visual character itself clearly indicates that character. "
+            "\n\n"
+
+            "LARGE CODE RULES: "
+            "The large code in the pink banner is uppercase when visible. "
+            "Return the characters exactly in their visible left-to-right order. "
+            "Do not include the surrounding banner text. "
+            "\n\n"
+
+            "CRITICAL — DO NOT GUESS: "
+            "If a character is partially obscured, blurred, cut off, distorted, or genuinely ambiguous, "
+            "do NOT invent a character based on what the code is expected to be. "
+            "Use the visible character only. "
+            "If an entire code cannot be reliably read, do not fabricate a complete code. "
+            "\n\n"
+
+            "CRITICAL — VISUAL VERIFICATION: "
+            "Before returning each code, perform a second visual pass over the image. "
+            "For every code: "
+            "1. Identify its exact boundaries. "
+            "2. Count the visible characters. "
+            "3. Read them from left to right. "
+            "4. Compare each character against the image again. "
+            "5. Verify that no character was skipped, duplicated, swapped, or invented. "
+            "\n\n"
+
+            "If the same code appears more than once in the image, return it only once. "
+            "Do not invent missing codes. "
+            "Do not use sample/reference text as a fallback. "
+            "Do not infer a code from previous runs. "
+            "\n\n"
+
+            "OUTPUT FORMAT: "
+            "Return ONLY valid JSON using exactly this schema: "
+            "{\"small_codes\": [], \"large_codes\": []}. "
+            "Do not return markdown. "
+            "Do not return explanations. "
+            "Do not return confidence scores. "
+            "Do not return additional fields. "
+            "Do not include any text outside the JSON object."
         )
 
         parts = [{"text": prompt}]
