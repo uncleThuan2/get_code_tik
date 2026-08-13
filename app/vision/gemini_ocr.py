@@ -10,7 +10,7 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SAMPLE_PATH = "sample/co_code_lon.png"
+DEFAULT_SAMPLE_PATH = os.getenv("DEFAULT_SAMPLE_PATH") or os.getenv("SAMPLE_REFERENCE_IMAGE_PATH", "")
 
 
 def _get_gemini_model_candidates() -> List[str]:
@@ -139,17 +139,6 @@ def delete_from_google_file_api(file_name: str, api_key: str):
         logger.warning(f"Failed to delete {file_name} from Google File API: {e}")
 
 
-def get_sample_image_base64() -> str:
-    """Load sample reference image as Base64 string from local file."""
-    if os.path.exists(DEFAULT_SAMPLE_PATH):
-        try:
-            with open(DEFAULT_SAMPLE_PATH, "rb") as f:
-                return base64.b64encode(f.read()).decode("utf-8")
-        except Exception as e:
-            logger.warning(f"Failed to load local sample image: {e}")
-    return ""
-
-
 def _normalize_box_to_pixels(box: List[int], width: int, height: int):
     """Normalize Gemini box values into pixel coordinates, supporting both 0..1000 and raw pixel formats."""
     if not isinstance(box, (list, tuple)) or len(box) != 4:
@@ -230,8 +219,93 @@ def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[i
         return None
 
 
+def detect_ui_box_via_gemini_vision(stream_data: bytes | Image.Image, api_key: str, sample_reference: str = "") -> List[int]:
+    """Step 1: identify the UI crop box from the live screenshot against the sample reference."""
+    if not stream_data:
+        return []
+
+    file_name, file_uri = upload_to_google_file_api(stream_data, api_key)
+    if not file_uri:
+        logger.error("Failed to obtain valid Google File API URI for screenshot detection step.")
+        return []
+
+    try:
+        prompt = (
+            "Compare the reference sample and the live screenshot. "
+            "Find the single reward-panel area in the live screenshot that matches the reference layout. "
+            "Return ONLY a JSON object in this exact format: {\"ui_box_2d\": [x1, y1, x2, y2]} using the image's actual pixel coordinates, not normalized 0..1000 values. "
+            "Use the real screenshot size: x and y are pixel positions in the full image. "
+            "The box should tightly cover the full reward-panel region, including the left chest column, reward bubble area, and the large reward banner. "
+            "Do not guess; if the match is unclear, return {\"ui_box_2d\": []}."
+        )
+
+        parts = [{"text": prompt}]
+        if sample_reference:
+            parts.append({"file_data": {"file_uri": sample_reference, "mime_type": "image/png"}})
+        parts.append({"file_data": {"file_uri": file_uri, "mime_type": "image/png"}})
+
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "temperature": 0.0,
+                "response_mime_type": "application/json"
+            }
+        }
+
+        timeout_sec = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
+        max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
+        backoff_seconds = int(os.getenv("GEMINI_BACKOFF_SECONDS", "2"))
+        model_candidates = _get_gemini_model_candidates()
+
+        for attempt in range(max_attempts):
+            for model_name in model_candidates:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                    response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=timeout_sec)
+                    res_json = response.json()
+
+                    if "error" in res_json:
+                        if _is_model_not_available_error(res_json):
+                            logger.warning(f"Model {model_name} is no longer available; trying next fallback model...")
+                            continue
+                        if _is_transient_gemini_error(res_json):
+                            logger.warning(f"Transient Gemini error during UI detection; retrying in {backoff_seconds}s...")
+                            time.sleep(backoff_seconds)
+                            continue
+                        logger.error(f"Gemini UI detection error: {res_json}")
+                        break
+
+                    candidates = res_json.get("candidates", [])
+                    if candidates:
+                        content_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                        parsed = json.loads(content_text)
+                        ui_box = parsed.get("ui_box_2d")
+                        if isinstance(ui_box, list) and len(ui_box) == 4:
+                            return [int(float(v)) for v in ui_box]
+                        return []
+
+                    logger.warning(f"Gemini detection step returned no candidates for model={model_name}.")
+                except requests.exceptions.ReadTimeout:
+                    logger.warning(f"Gemini detection timeout for model={model_name}; retrying...")
+                    time.sleep(backoff_seconds)
+                    continue
+                except Exception as e:
+                    logger.error(f"Gemini detection request failed for model={model_name}: {e}", exc_info=True)
+                    break
+
+            if attempt < max_attempts - 1:
+                time.sleep(backoff_seconds * (attempt + 1))
+
+        return []
+    finally:
+        if file_name:
+            delete_from_google_file_api(file_name, api_key)
+
+
 def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api_key: str = None) -> Tuple[List[str], List[str], bytes | None]:
-    """Extract small and large reward codes with bounding boxes, returning 1 single cropped sample image region:
+    """Two-stage OCR flow:
+    1) detect area box from the full screenshot,
+    2) crop that area and OCR the crop image using a second prompt.
     Returns:
         (small_codes: List[str], large_codes: List[str], sample_cropped_bytes: bytes | None)
     """
@@ -240,136 +314,109 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         logger.warning("GEMINI_API_KEY environment variable not provided.")
         return [], [], None
 
-    file_name, file_uri = "", ""
-    if stream_data:
-        file_name, file_uri = upload_to_google_file_api(stream_data, key)
-
-    if not file_uri:
-        logger.error("Failed to obtain valid Google File API URI for screenshot.")
+    if not stream_data:
         return [], [], None
 
-    sample_b64 = get_sample_image_base64()
+    sample_reference = (DEFAULT_SAMPLE_PATH or "").strip()
 
-    prompt = (
-        "Image 1 is the reference sample UI layout showing the entire reward panel area (containing vertical chest progress column on the left, yellow speech bubbles for small codes, and the bottom pink banner for large code). "
-        "Image 2 (from Google File API URI) is the live stream screenshot. Compare Image 2 against Image 1 and perform two tasks:\n"
-        "1) Identify the 1 single overall bounding box [ymin, xmin, ymax, xmax] (normalized 0-1000 scale) on Image 2 that covers the ENTIRE UI panel area exactly matching Image 1's sample layout.\n"
-        "2) Extract all reward codes visible inside that UI area:\n"
-        "   - All small reward codes in yellow speech bubbles (preserve exact letter casing, e.g. 'w3qg8mz5').\n"
-        "   - The large reward code in the pink banner if released (ALWAYS 100% UPPERCASE, e.g. 'HN9KJMEW').\n"
-        "\nCRITICAL OCR CHARACTER ACCURACY & SEQUENCING INSTRUCTIONS:\n"
-        "- STRICT LEFT-TO-RIGHT ORDERING: Read characters STRICTLY from LEFT to RIGHT in exact sequence. NEVER scramble or swap adjacent characters.\n"
-        "- Inspect each character stroke with extreme precision to prevent confusing similar shapes:\n"
-        "  * 'f' (lowercase f with top curve and crossbar) vs '1' (number one with straight top serif).\n"
-        "  * 'J' (curved bottom hook) vs 'I' (straight vertical line) / 'L' (right-angle base).\n"
-        "  * 'E' (3 horizontal parallel bars) vs 'B' (2 closed rounded loops) / '8'.\n"
-        "  * '0' (zero) vs 'O' (uppercase O) vs 'o' (lowercase o).\n"
-        "  * '1' (one) vs 'I' (uppercase i) vs 'l' (lowercase L) vs 'f' (lowercase f).\n"
-        "  * '5' (five) vs 'S' (uppercase S) vs 's' (lowercase s).\n"
-        "  * '8' (eight) vs 'B' (uppercase B).\n"
-        "  * 'g' (lowercase g with descender) vs '9' (nine) vs 'q'.\n"
-        "  * 'u' (lowercase u) vs 'v' (lowercase v) vs 'U' / 'V'.\n"
-        "  * 'w' (lowercase w) vs 'vv' (two v's) vs 'W' (uppercase W).\n"
-        "- Return ONLY a valid JSON object with this exact schema. DO NOT invent values from the sample template. If nothing is found, return empty lists, not sample strings. Example:\n"
-        "{\n"
-        "  \"ui_box_2d\": [],\n"
-        "  \"small_codes\": [],\n"
-        "  \"large_codes\": []\n"
-        "}\n"
-        "- If a real match is found, replace the empty arrays with actual values and use a valid box as [ymin, xmin, ymax, xmax]."
-    )
+    ui_box = detect_ui_box_via_gemini_vision(stream_data, key, sample_reference)
+    if not ui_box:
+        logger.warning("No valid UI box detected from screenshot. Returning empty code list.")
+        return [], [], None
 
-    parts = [{"text": prompt}]
+    sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
+    if not sample_cropped_bytes:
+        logger.warning("Failed to crop screenshot with detected box. Returning empty code list.")
+        return [], [], None
 
-    if sample_b64:
-        parts.append({"inline_data": {"mime_type": "image/png", "data": sample_b64}})
-
-    parts.append({
-        "file_data": {
-            "file_uri": file_uri,
-            "mime_type": "image/png"
-        }
-    })
-
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 0.0,
-            "response_mime_type": "application/json"
-        }
-    }
-
-    headers = {"Content-Type": "application/json"}
-
-    timeout_sec = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
-    max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
-    backoff_seconds = int(os.getenv("GEMINI_BACKOFF_SECONDS", "2"))
-    small_codes, large_codes = [], []
-    sample_cropped_bytes = None
-    model_candidates = _get_gemini_model_candidates()
+    crop_file_name, crop_file_uri = upload_to_google_file_api(sample_cropped_bytes, key)
+    if not crop_file_uri:
+        logger.error("Failed to upload cropped image to Google File API for OCR step.")
+        return [], [], sample_cropped_bytes
 
     try:
+        prompt = (
+            "You are given exactly ONE image only: the cropped reward-panel image. "
+            "Use the image content itself as the source of truth. "
+            "Read only the reward codes inside the valid panel area: yellow small-code bubbles, and the large pink banner at the bottom. "
+            "Preserve exact letter casing for small codes and uppercase for large codes. "        
+            "- STRICT LEFT-TO-RIGHT ORDERING: Read characters STRICTLY from LEFT to RIGHT in exact sequence. NEVER scramble or swap adjacent characters.\n"
+            "- Inspect each character stroke with extreme precision to prevent confusing similar shapes:\n"
+            "  * 'f' (lowercase f with top curve and crossbar) vs '1' (number one with straight top serif).\n"
+            "  * 'J' (curved bottom hook) vs 'I' (straight vertical line) / 'L' (right-angle base).\n"
+            "  * 'E' (3 horizontal parallel bars) vs 'B' (2 closed rounded loops) / '8'.\n"
+            "  * '0' (zero) vs 'O' (uppercase O) vs 'o' (lowercase o).\n"
+            "  * '1' (one) vs 'I' (uppercase i) vs 'l' (lowercase L) vs 'f' (lowercase f).\n"
+            "  * '5' (five) vs 'S' (uppercase S) vs 's' (lowercase s).\n"
+            "  * '8' (eight) vs 'B' (uppercase B).\n"
+            "  * 'g' (lowercase g with descender) vs '9' (nine) vs 'q'.\n"
+            "  * 'u' (lowercase u) vs 'v' (lowercase v) vs 'U' / 'V'.\n"
+            "  * 'w' (lowercase w) vs 'vv' (two v's) vs 'W' (uppercase W).\n"
+            "- A small code can contain lowercase and digits, but only read what is actually visible.\n"
+            "- The large banner code is always uppercase if it is visible.\n"
+            "Return ONLY valid JSON in this exact schema: {\"small_codes\": [], \"large_codes\": []}. "
+            "Do not invent values, do not use sample text as fallback, and do not include any extra text outside JSON."
+        )
+
+        parts = [{"text": prompt}]
+        parts.append({"file_data": {"file_uri": crop_file_uri, "mime_type": "image/png"}})
+
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "temperature": 0.0,
+                "response_mime_type": "application/json"
+            }
+        }
+
+        timeout_sec = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
+        max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
+        backoff_seconds = int(os.getenv("GEMINI_BACKOFF_SECONDS", "2"))
+        model_candidates = _get_gemini_model_candidates()
+
         for attempt in range(max_attempts):
-            last_error = None
             for model_name in model_candidates:
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
-                    logger.info(f"Sending Gemini Vision API request (attempt {attempt + 1}/{max_attempts}, model={model_name}, timeout={timeout_sec}s)...")
-                    response = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
+                    logger.info(f"Sending cropped OCR request (attempt {attempt + 1}/{max_attempts}, model={model_name})...")
+                    response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=timeout_sec)
                     res_json = response.json()
 
                     if "error" in res_json:
-                        last_error = res_json["error"]
-                        logger.error(f"Gemini API Error for model={model_name}: {last_error}")
                         if _is_model_not_available_error(res_json):
-                            logger.warning(f"Model {model_name} is no longer available to this account; trying next fallback model...")
-                            last_error = None
+                            logger.warning(f"Model {model_name} is no longer available; trying next fallback model...")
                             continue
                         if _is_transient_gemini_error(res_json):
-                            logger.warning(f"Transient Gemini error detected; retrying with backoff ({backoff_seconds}s)...")
+                            logger.warning(f"Transient Gemini error during OCR; retrying in {backoff_seconds}s...")
                             time.sleep(backoff_seconds)
                             continue
+                        logger.error(f"Gemini OCR error: {res_json}")
                         break
 
                     candidates = res_json.get("candidates", [])
                     if candidates:
                         content_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                        logger.info(f"Gemini AI Raw Response: {content_text}")
-
+                        logger.info(f"Gemini cropped OCR raw response: {content_text}")
                         parsed = json.loads(content_text)
-                        ui_box = parsed.get("ui_box_2d")
                         raw_small = parsed.get("small_codes", [])
                         raw_large = parsed.get("large_codes", [])
-
                         small_codes = [s.strip() for s in raw_small if isinstance(s, str) and s.strip()]
                         large_codes = [l.strip().upper() for l in raw_large if isinstance(l, str) and l.strip()]
-
-                        if stream_data and ui_box and isinstance(ui_box, list) and len(ui_box) == 4:
-                            sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
-
                         return small_codes, large_codes, sample_cropped_bytes
 
-                    logger.warning(f"Gemini returned no candidates for model={model_name}; trying next available model.")
-                    break
-
+                    logger.warning(f"Gemini OCR step returned no candidates for model={model_name}.")
                 except requests.exceptions.ReadTimeout:
-                    logger.warning(f"Gemini Vision API call timed out on model={model_name} (attempt {attempt + 1}/{max_attempts}). Retrying...")
+                    logger.warning(f"Gemini OCR timeout for model={model_name}; retrying...")
                     time.sleep(backoff_seconds)
                     continue
                 except Exception as e:
-                    logger.error(f"Gemini Vision API call failed for model={model_name}: {e}", exc_info=True)
-                    last_error = str(e)
+                    logger.error(f"Gemini OCR request failed for model={model_name}: {e}", exc_info=True)
                     break
 
-            if last_error is not None and not _is_transient_gemini_error({"error": last_error}) and not _is_model_not_available_error({"error": last_error}):
-                break
-
             if attempt < max_attempts - 1:
-                logger.info(f"Retrying Gemini request after transient failure (attempt {attempt + 2}/{max_attempts})...")
                 time.sleep(backoff_seconds * (attempt + 1))
 
+        return [], [], sample_cropped_bytes
     finally:
-        if file_name:
-            delete_from_google_file_api(file_name, key)
-
-    return small_codes, large_codes, sample_cropped_bytes
+        if crop_file_name:
+            delete_from_google_file_api(crop_file_name, key)

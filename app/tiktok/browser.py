@@ -12,7 +12,7 @@ class TikTokBrowser:
     def __init__(self, config: dict):
         self.config = config.get("browser", {})
         self.headless: bool = self.config.get("headless", True)
-        self.viewport: dict = self.config.get("viewport", {"width": 1280, "height": 720})
+        self.viewport: dict = self.config.get("viewport", {"width": 1912, "height": 1080})
         self.user_agent: str = self.config.get(
             "user_agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -34,13 +34,13 @@ class TikTokBrowser:
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
                 "--incognito",
-                "--window-size=1280,720",
+                "--window-size=1912,1080",
                 "--force-device-scale-factor=1",
                 "--high-dpi-support=1",
             ],
         )
         self._context = await self._browser.new_context(
-            viewport={"width": 1280, "height": 720},
+            viewport={"width": 1912, "height": 1080},
             device_scale_factor=1,
             user_agent=self.user_agent,
             locale="vi-VN",
