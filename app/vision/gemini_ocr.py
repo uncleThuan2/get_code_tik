@@ -228,7 +228,7 @@ def detect_ui_box_via_gemini_vision(stream_data: bytes | Image.Image, api_key: s
     if not file_uri:
         logger.error("Failed to obtain valid Google File API URI for screenshot detection step.")
         return []
-    with Image.open(stream_data) as img:
+    with Image.open(file_uri) as img:
         live_width, live_height = img.size
 
     try:
