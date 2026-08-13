@@ -2,6 +2,7 @@ import os
 import io
 import json
 import base64
+import time
 import requests
 import logging
 from typing import Tuple, List
@@ -10,6 +11,50 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 DEFAULT_SAMPLE_PATH = "sample/co_code_lon.png"
+
+
+def _get_gemini_model_candidates() -> List[str]:
+    """Return the preferred Gemini model plus safe fallbacks when a model is overloaded."""
+    configured = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    candidates = [configured] if configured else []
+    fallback_models = [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+    ]
+
+    for model in fallback_models:
+        if model not in candidates:
+            candidates.append(model)
+
+    return candidates
+
+
+def _is_transient_gemini_error(res_json: dict) -> bool:
+    """Google AI can return 503/429/RESOURCE_EXHAUSTED while a model is busy; these are retryable."""
+    if not isinstance(res_json, dict):
+        return False
+
+    error = res_json.get("error", {})
+    if isinstance(error, dict):
+        code = error.get("code")
+        status = str(error.get("status", "")).upper()
+        message = str(error.get("message", "")).lower()
+
+        if code in (429, 503) or status in {"UNAVAILABLE", "RESOURCE_EXHAUSTED", "RATE_LIMIT_EXCEEDED", "DEADLINE_EXCEEDED"}:
+            return True
+
+        if any(token in message for token in [
+            "high demand",
+            "overloaded",
+            "temporarily unavailable",
+            "rate limit",
+            "exhausted",
+            "busy"
+        ]):
+            return True
+
+    return False
 
 
 def upload_to_google_file_api(img_data: bytes | Image.Image, api_key: str) -> Tuple[str, str]:
@@ -142,8 +187,6 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         logger.error("Failed to obtain valid Google File API URI for screenshot.")
         return [], [], None
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
-
     sample_b64 = get_sample_image_base64()
 
     prompt = (
@@ -166,12 +209,13 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         "  * 'g' (lowercase g with descender) vs '9' (nine) vs 'q'.\n"
         "  * 'u' (lowercase u) vs 'v' (lowercase v) vs 'U' / 'V'.\n"
         "  * 'w' (lowercase w) vs 'vv' (two v's) vs 'W' (uppercase W).\n"
-        "- Return ONLY a valid JSON object with format:\n"
+        "- Return ONLY a valid JSON object with this exact schema. DO NOT invent values from the sample template. If nothing is found, return empty lists, not sample strings. Example:\n"
         "{\n"
-        "  \"ui_box_2d\": [ymin, xmin, ymax, xmax],\n"
-        "  \"small_codes\": [\"w3qg8mz5\"],\n"
-        "  \"large_codes\": [\"HN9KJMEW\"]\n"
-        "}"
+        "  \"ui_box_2d\": [],\n"
+        "  \"small_codes\": [],\n"
+        "  \"large_codes\": []\n"
+        "}\n"
+        "- If a real match is found, replace the empty arrays with actual values and use a valid box as [ymin, xmin, ymax, xmax]."
     )
 
     parts = [{"text": prompt}]
@@ -197,21 +241,31 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
     headers = {"Content-Type": "application/json"}
 
     timeout_sec = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
+    max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
+    backoff_seconds = int(os.getenv("GEMINI_BACKOFF_SECONDS", "2"))
     small_codes, large_codes = [], []
-    all_boxes = []
     sample_cropped_bytes = None
+    model_candidates = _get_gemini_model_candidates()
 
     try:
-        for attempt in range(2):
-            try:
-                logger.info(f"Sending Gemini Vision API request (attempt {attempt+1}/2, timeout={timeout_sec}s)...")
-                response = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
-                res_json = response.json()
+        for attempt in range(max_attempts):
+            last_error = None
+            for model_name in model_candidates:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+                    logger.info(f"Sending Gemini Vision API request (attempt {attempt + 1}/{max_attempts}, model={model_name}, timeout={timeout_sec}s)...")
+                    response = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
+                    res_json = response.json()
 
-                if "error" in res_json:
-                    logger.error(f"Gemini API Error: {res_json['error']}")
-                    break
-                else:
+                    if "error" in res_json:
+                        last_error = res_json["error"]
+                        logger.error(f"Gemini API Error for model={model_name}: {last_error}")
+                        if _is_transient_gemini_error(res_json):
+                            logger.warning(f"Transient Gemini error detected; retrying with backoff ({backoff_seconds}s)...")
+                            time.sleep(backoff_seconds)
+                            continue
+                        break
+
                     candidates = res_json.get("candidates", [])
                     if candidates:
                         content_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
@@ -228,13 +282,27 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                         if stream_data and ui_box and isinstance(ui_box, list) and len(ui_box) == 4:
                             sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
 
-                        break
+                        return small_codes, large_codes, sample_cropped_bytes
 
-            except requests.exceptions.ReadTimeout:
-                logger.warning(f"Gemini Vision API call timed out on attempt {attempt+1} (timeout={timeout_sec}s). Retrying...")
-            except Exception as e:
-                logger.error(f"Gemini Vision API call failed: {e}", exc_info=True)
+                    logger.warning(f"Gemini returned no candidates for model={model_name}; trying next available model.")
+                    break
+
+                except requests.exceptions.ReadTimeout:
+                    logger.warning(f"Gemini Vision API call timed out on model={model_name} (attempt {attempt + 1}/{max_attempts}). Retrying...")
+                    time.sleep(backoff_seconds)
+                    continue
+                except Exception as e:
+                    logger.error(f"Gemini Vision API call failed for model={model_name}: {e}", exc_info=True)
+                    last_error = str(e)
+                    break
+
+            if last_error is not None and not _is_transient_gemini_error({"error": last_error}):
                 break
+
+            if attempt < max_attempts - 1:
+                logger.info(f"Retrying Gemini request after transient failure (attempt {attempt + 2}/{max_attempts})...")
+                time.sleep(backoff_seconds * (attempt + 1))
+
     finally:
         if file_name:
             delete_from_google_file_api(file_name, key)
