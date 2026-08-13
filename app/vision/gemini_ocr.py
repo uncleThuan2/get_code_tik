@@ -1,11 +1,13 @@
 import os
 import io
 import json
-import base64
 import time
-import requests
 import logging
 from typing import Tuple, List
+
+import cv2
+import numpy as np
+import requests
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -174,7 +176,7 @@ def _normalize_box_to_pixels(box: List[int], width: int, height: int):
     ]
 
 
-def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[int]], padding_percent: float = 0.01) -> bytes | None:
+def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[int]], padding_percent: float = 0.04) -> bytes | None:
     """Crop 1 SINGLE combined image region covering ALL detected code regions (matching sample layout region)."""
     valid_boxes = [b for b in boxes if isinstance(b, list) and len(b) == 4]
     if not img_data or not valid_boxes:
@@ -221,244 +223,72 @@ def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[i
         return None
 
 
-def detect_ui_box_via_gemini_vision(stream_data: bytes | Image.Image, api_key: str, sample_reference: str = "") -> List[int]:
-    """Step 1: identify the UI crop box from the live screenshot against the sample reference."""
-    if not stream_data:
-        return []
+def _load_reference_template(sample_reference: str = "") -> Image.Image | None:
+    """Load the configured sample image from a local path or a Google File API URI."""
+    if not sample_reference:
+        return None
 
-    file_name, file_uri = upload_to_google_file_api(stream_data, api_key)
-    if not file_uri:
-        logger.error("Failed to obtain valid Google File API URI for screenshot detection step.")
-        return []
-
-    if isinstance(stream_data, Image.Image):
-        live_img = stream_data.copy()
-    else:
-        live_img = Image.open(io.BytesIO(stream_data))
-    live_width, live_height = live_img.size
+    reference = (sample_reference or "").strip()
+    if not reference:
+        return None
 
     try:
-        prompt = f"""
-        You are performing precise visual localization on a screenshot.
+        if reference.startswith(("http://", "https://")):
+            response = requests.get(reference, timeout=20)
+            response.raise_for_status()
+            return Image.open(io.BytesIO(response.content)).convert("RGB")
 
-        You are given TWO images.
+        candidates = [reference]
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        if not os.path.isabs(reference):
+            candidates.append(os.path.join(project_root, reference))
 
-        IMAGE 1 — LIVE SCREENSHOT:
-        - This is the original full screenshot captured from the browser.
-        - Original dimensions:
-        WIDTH = {live_width}
-        HEIGHT = {live_height}
-        - All coordinates MUST refer to this original image.
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return Image.open(candidate).convert("RGB")
 
-        IMAGE 2 — REFERENCE IMAGE:
-        - This is a cropped reference image of the reward panel.
-        - The reference image has been resized/enlarged and may have a different scale from the corresponding region in IMAGE 1.
-        - DO NOT assume that IMAGE 2 has the same pixel scale or dimensions as the target region in IMAGE 1.
-        - Use IMAGE 2 only as a visual reference for identifying the target structure.
+        logger.warning(f"Reference template not found: {reference}")
+        return None
+    except Exception as exc:
+        logger.warning(f"Failed to load reference template {reference}: {exc}")
+        return None
 
-        TASK:
 
-        Find the reward-panel region in IMAGE 1 that visually corresponds to IMAGE 2.
-
-        The target reward panel is the complete reward UI area shown in the reference image.
-
-        It contains:
-        1. The vertical column of reward/chest icons on the left.
-        2. The reward amount/bubble area.
-        3. The large reward-code banner below the reward icons.
-        4. The surrounding decorative/background area that belongs to the same reward panel.
-
-        IMPORTANT MATCHING RULES:
-
-        - The reward codes are DYNAMIC and may be different between screenshots.
-        - DO NOT use the actual code characters as the primary matching feature.
-        - Ignore differences in the code text.
-        - Focus on stable visual elements:
-        - reward/chest icons
-        - icon positions
-        - spacing
-        - panel borders
-        - shapes
-        - decorative elements
-        - background structure
-        - relative positions of all elements
-        - IMAGE 2 is a resized/enlarged crop.
-        - You MUST account for the scale difference between IMAGE 1 and IMAGE 2.
-        - DO NOT copy IMAGE 2's pixel dimensions into the result.
-        - DO NOT assume a 1:1 pixel correspondence between the two images.
-
-        COORDINATE SYSTEM:
-
-        Use ONLY the original pixel coordinate system of IMAGE 1.
-
-        The top-left pixel of IMAGE 1 is:
-
-        (0, 0)
-
-        X increases from left to right.
-        Y increases from top to bottom.
-
-        Return:
-
-        [x1, y1, x2, y2]
-
-        where:
-
-        x1 = left edge of the complete reward panel
-        y1 = top edge of the complete reward panel
-        x2 = right edge of the complete reward panel
-        y2 = bottom edge of the complete reward panel
-
-        The bounding box must tightly contain the COMPLETE reward panel.
-
-        Do NOT include:
-        - TikTok chat
-        - TikTok sidebar
-        - video player controls
-        - unrelated UI
-        - large empty areas outside the reward panel
-
-        Do NOT crop any part of the reward panel.
-
-        VISUAL VERIFICATION:
-
-        Before returning coordinates:
-
-        1. Identify the reward-panel structure in IMAGE 2.
-        2. Ignore IMAGE 2's absolute pixel dimensions.
-        3. Find the same visual structure in IMAGE 1.
-        4. Verify multiple independent landmarks:
-        - reward/chest column
-        - spacing between reward icons
-        - reward bubble/banner
-        - panel borders
-        - decorative background
-        - relative positions of these elements
-        5. Determine the bounding box only after these landmarks match.
-        6. Verify that all coordinates are inside IMAGE 1.
-
-        Coordinate constraints:
-
-        0 <= x1 < x2 <= {live_width}
-        0 <= y1 < y2 <= {live_height}
-
-        IMPORTANT:
-
-        Do NOT return normalized coordinates.
-
-        Do NOT use the 0-1000 coordinate system.
-
-        Do NOT use coordinates relative to IMAGE 2.
-
-        Do NOT use coordinates from a resized version of IMAGE 1.
-
-        Use the ORIGINAL PIXEL COORDINATES of IMAGE 1.
-
-        If the target reward panel cannot be identified with high confidence, DO NOT GUESS.
-
-        Return:
-
-        {{"ui_box_2d":[]}}
-
-        OUTPUT FORMAT:
-
-        Return ONLY a valid JSON object.
-
-        If detected:
-
-        {{"ui_box_2d":[x1,y1,x2,y2]}}
-
-        If not confidently detected:
-
-        {{"ui_box_2d":[]}}
-
-        Do not return markdown.
-        Do not return code fences.
-        Do not return explanations.
-        Do not return confidence scores.
-        Do not return any additional fields.
-        """
-
-        parts = [{"text": prompt}]
-
-        # IMAGE 1: LIVE screenshot
-        parts.append({
-            "file_data": {
-                "file_uri": file_uri,
-                "mime_type": "image/png"
-            }
-        })
-
-        # IMAGE 2: Reference/sample image
-        if sample_reference:
-            parts.append({
-                "file_data": {
-                    "file_uri": sample_reference,
-                    "mime_type": "image/png"
-                }
-            })
-
-        payload = {
-            "contents": [{"parts": parts}],
-            "generationConfig": {
-                "temperature": 0.0,
-                "response_mime_type": "application/json"
-            }
-        }
-
-        timeout_sec = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
-        max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
-        backoff_seconds = int(os.getenv("GEMINI_BACKOFF_SECONDS", "2"))
-        model_candidates = _get_gemini_model_candidates()
-
-        for attempt in range(max_attempts):
-            for model_name in model_candidates:
-                try:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-                    response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=timeout_sec)
-                    res_json = response.json()
-
-                    if "error" in res_json:
-                        if _is_model_not_available_error(res_json):
-                            logger.warning(f"Model {model_name} is no longer available; trying next fallback model...")
-                            continue
-                        if _is_transient_gemini_error(res_json):
-                            logger.warning(f"Transient Gemini error during UI detection; retrying in {backoff_seconds}s...")
-                            time.sleep(backoff_seconds)
-                            continue
-                        logger.error(f"Gemini UI detection error: {res_json}")
-                        break
-
-                    candidates = res_json.get("candidates", [])
-                    if candidates:
-                        content_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                        parsed = json.loads(content_text)
-                        ui_box = parsed.get("ui_box_2d")
-                        logger.info(
-                            f"Gemini UI box: {ui_box} | "
-                            f"original image size: {live_width}x{live_height}"
-                        )
-                        if isinstance(ui_box, list) and len(ui_box) == 4:
-                            return [int(float(v)) for v in ui_box]
-                        return []
-
-                    logger.warning(f"Gemini detection step returned no candidates for model={model_name}.")
-                except requests.exceptions.ReadTimeout:
-                    logger.warning(f"Gemini detection timeout for model={model_name}; retrying...")
-                    time.sleep(backoff_seconds)
-                    continue
-                except Exception as e:
-                    logger.error(f"Gemini detection request failed for model={model_name}: {e}", exc_info=True)
-                    break
-
-            if attempt < max_attempts - 1:
-                time.sleep(backoff_seconds * (attempt + 1))
-
+def _detect_ui_box_via_template_match(stream_data: bytes | Image.Image, sample_reference: str = "") -> List[int]:
+    """Detect the reward-panel box using OpenCV template matching against the configured reference image."""
+    if not stream_data or not sample_reference:
         return []
-    finally:
-        if file_name:
-            delete_from_google_file_api(file_name, api_key)
 
+    try:
+        if isinstance(stream_data, Image.Image):
+            live_img = stream_data.copy().convert("RGB")
+        else:
+            live_img = Image.open(io.BytesIO(stream_data)).convert("RGB")
+
+        template_img = _load_reference_template(sample_reference)
+        if template_img is None:
+            return []
+
+        if not hasattr(cv2, "matchTemplate") or not hasattr(cv2, "minMaxLoc"):
+            return []
+
+        live_cv = np.array(live_img)
+        template_cv = np.array(template_img)
+        live_gray = cv2.cvtColor(live_cv, cv2.COLOR_RGB2GRAY)
+        template_gray = cv2.cvtColor(template_cv, cv2.COLOR_RGB2GRAY)
+        result = cv2.matchTemplate(live_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+        if max_val < 0.05:
+            logger.warning(f"Template match confidence too low: {max_val}")
+            return []
+
+        x, y = max_loc
+        template_h, template_w = template_gray.shape[:2]
+        return [int(x), int(y), int(x + template_w), int(y + template_h)]
+    except Exception as exc:
+        logger.warning(f"OpenCV template matching failed: {exc}")
+        return []
 
 def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api_key: str = None) -> Tuple[List[str], List[str], bytes | None]:
     """Two-stage OCR flow:
@@ -476,13 +306,16 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         return [], [], None
 
     sample_reference = (DEFAULT_SAMPLE_PATH or "").strip()
-
-    ui_box = detect_ui_box_via_gemini_vision(stream_data, key, sample_reference)
-    if not ui_box:
-        logger.warning("No valid UI box detected from screenshot. Returning empty code list.")
+    if not sample_reference:
+        logger.warning("DEFAULT_SAMPLE_PATH is empty; template match cannot localize the reward panel.")
         return [], [], None
 
-    logger.info(f"Cropping detected UI box: {ui_box}")
+    ui_box = _detect_ui_box_via_template_match(stream_data, sample_reference)
+    if not ui_box:
+        logger.warning("No valid UI box detected from screenshot by OpenCV template match. Returning empty code list.")
+        return [], [], None
+
+    logger.info(f"Cropping matched UI box from screenshot: {ui_box}")
     sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
     if not sample_cropped_bytes:
         logger.warning("Failed to crop screenshot with detected box. Returning empty code list.")
@@ -499,16 +332,13 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
             "Use ONLY the visible image content as the source of truth. "
             "Do NOT use external knowledge, previous screenshots, sample images, or expected code patterns. "
             "\n\n"
-
             "TASK: "
             "Extract every currently visible reward code from the cropped reward panel. "
             "\n\n"
-
             "There are TWO types of reward codes: "
             "1. SMALL CODES: codes displayed inside the yellow reward bubbles. "
             "2. LARGE CODES: the code displayed inside the large pink banner at the bottom. "
             "\n\n"
-
             "IMPORTANT — CODE BOUNDARIES: "
             "Only read characters that are actually inside a valid reward-code area. "
             "Do NOT read surrounding UI text, labels, numbers, icons, usernames, counters, or decorative text. "
@@ -516,13 +346,11 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
             "Each yellow bubble represents one separate small code. "
             "The pink banner represents one large code. "
             "\n\n"
-
             "IMPORTANT — EXACT CHARACTER RECOGNITION: "
             "Read every code character strictly from LEFT TO RIGHT in its visual order. "
             "Never reorder, swap, reverse, or rearrange characters. "
             "The position of every character in the output must exactly match its position in the image. "
             "\n\n"
-
             "Inspect each character individually before producing the final result. "
             "Pay special attention to visually similar characters, including: "
             "'f' vs '1', "
@@ -536,13 +364,11 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
             "'u' vs 'v' vs 'U' vs 'V', "
             "'w' vs 'vv' vs 'W'. "
             "\n\n"
-
             "Do NOT automatically normalize ambiguous characters. "
             "If the image clearly shows lowercase, preserve lowercase. "
             "If the image clearly shows uppercase, preserve uppercase. "
             "If the image clearly shows a digit, preserve the digit. "
             "\n\n"
-
             "SMALL CODE RULES: "
             "Small codes may contain lowercase letters, uppercase letters, and digits. "
             "Preserve the exact visible casing. "
@@ -550,20 +376,17 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
             "Do not convert uppercase to lowercase. "
             "Do not replace letters with digits or digits with letters unless the visual character itself clearly indicates that character. "
             "\n\n"
-
             "LARGE CODE RULES: "
             "The large code in the pink banner is uppercase when visible. "
             "Return the characters exactly in their visible left-to-right order. "
             "Do not include the surrounding banner text. "
             "\n\n"
-
             "CRITICAL — DO NOT GUESS: "
             "If a character is partially obscured, blurred, cut off, distorted, or genuinely ambiguous, "
             "do NOT invent a character based on what the code is expected to be. "
             "Use the visible character only. "
             "If an entire code cannot be reliably read, do not fabricate a complete code. "
             "\n\n"
-
             "CRITICAL — VISUAL VERIFICATION: "
             "Before returning each code, perform a second visual pass over the image. "
             "For every code: "
@@ -573,13 +396,11 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
             "4. Compare each character against the image again. "
             "5. Verify that no character was skipped, duplicated, swapped, or invented. "
             "\n\n"
-
             "If the same code appears more than once in the image, return it only once. "
             "Do not invent missing codes. "
             "Do not use sample/reference text as a fallback. "
             "Do not infer a code from previous runs. "
             "\n\n"
-
             "OUTPUT FORMAT: "
             "Return ONLY valid JSON using exactly this schema: "
             "{\"small_codes\": [], \"large_codes\": []}. "
