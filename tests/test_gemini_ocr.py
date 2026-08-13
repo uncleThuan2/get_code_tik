@@ -123,6 +123,24 @@ def test_crop_combined_bounding_box_handles_normalized_coords():
     assert result.size == (280, 280)
 
 
+def test_delete_from_google_file_api_keeps_default_sample_reference(monkeypatch):
+    module = __import__("app.vision.gemini_ocr", fromlist=["delete_from_google_file_api"])
+    module.DEFAULT_SAMPLE_PATH = "https://generativelanguage.googleapis.com/v1beta/files/sample-123"
+    calls = []
+
+    def fake_delete(url, timeout=None):
+        calls.append(url)
+        return DummyResponse(200, {})
+
+    monkeypatch.setattr(module.requests, "delete", fake_delete)
+
+    module.delete_from_google_file_api("files/sample-123", "test-key")
+    module.delete_from_google_file_api("files/live-456", "test-key")
+
+    assert len(calls) == 1
+    assert "live-456" in calls[0]
+
+
 def test_extract_codes_uses_two_stage_detection_then_crop_ocr(monkeypatch):
     calls = []
 

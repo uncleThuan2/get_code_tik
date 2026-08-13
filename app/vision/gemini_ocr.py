@@ -123,9 +123,15 @@ def upload_to_google_file_api(img_data: bytes | Image.Image, api_key: str) -> Tu
 
 
 def delete_from_google_file_api(file_name: str, api_key: str):
-    """Delete uploaded screenshot file from Google File API server immediately after process finishes."""
+    """Delete temporary uploaded screenshot files but never the configured sample reference image."""
     if not file_name:
         return
+
+    sample_reference = (DEFAULT_SAMPLE_PATH or "").strip()
+    if sample_reference:
+        if file_name in sample_reference or sample_reference.endswith(file_name):
+            logger.info(f"Skipping deletion of protected sample reference: {sample_reference}")
+            return
 
     try:
         delete_url = f"https://generativelanguage.googleapis.com/v1beta/{file_name}?key={api_key}"
