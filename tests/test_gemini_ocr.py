@@ -104,3 +104,14 @@ def test_extract_codes_skips_model_removed_by_google(monkeypatch):
     assert large_codes == ["HN9KJMEW"]
     assert sample_cropped is not None
     assert len(calls) >= 2
+
+
+def test_crop_combined_bounding_box_handles_normalized_coords():
+    image = Image.new("RGB", (1000, 1000), color="white")
+    box = [200, 150, 400, 350]
+
+    cropped = __import__("app.vision.gemini_ocr", fromlist=["crop_combined_bounding_box"]).crop_combined_bounding_box(image, [box])
+
+    assert cropped is not None
+    result = Image.open(__import__("io").BytesIO(cropped))
+    assert result.size == (280, 280)

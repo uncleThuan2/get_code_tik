@@ -150,6 +150,39 @@ def get_sample_image_base64() -> str:
     return ""
 
 
+def _normalize_box_to_pixels(box: List[int], width: int, height: int):
+    """Normalize Gemini box values into pixel coordinates, supporting both 0..1000 and raw pixel formats."""
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return None
+
+    try:
+        vals = [float(v) for v in box]
+    except (TypeError, ValueError):
+        return None
+
+    if any(not (0 <= v <= 10000) for v in vals):
+        return None
+
+    ymin, xmin, ymax, xmax = vals
+
+    # Gemini often returns normalized [ymin, xmin, ymax, xmax] in 0..1000.
+    if max(vals) <= 1000:
+        xmin = xmin / 1000.0 * width
+        ymin = ymin / 1000.0 * height
+        xmax = xmax / 1000.0 * width
+        ymax = ymax / 1000.0 * height
+
+    x1 = max(0, min(width, xmin))
+    y1 = max(0, min(height, ymin))
+    x2 = max(0, min(width, xmax))
+    y2 = max(0, min(height, ymax))
+
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    return [int(x1), int(y1), int(x2), int(y2)]
+
+
 def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[int]], padding_percent: float = 0.04) -> bytes | None:
     """Crop 1 SINGLE combined image region covering ALL detected code regions (matching sample layout region)."""
     valid_boxes = [b for b in boxes if isinstance(b, list) and len(b) == 4]
@@ -163,21 +196,30 @@ def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[i
             img = Image.open(io.BytesIO(img_data))
 
         width, height = img.size
+        normalized_boxes = []
+        for box in valid_boxes:
+            normalized = _normalize_box_to_pixels(box, width, height)
+            if normalized is not None:
+                normalized_boxes.append(normalized)
 
-        # Find 1 single bounding box that encompasses ALL codes
-        min_ymin = min(b[0] for b in valid_boxes)
-        min_xmin = min(b[1] for b in valid_boxes)
-        max_ymax = max(b[2] for b in valid_boxes)
-        max_xmax = max(b[3] for b in valid_boxes)
+        if not normalized_boxes:
+            return None
 
-        # Add padding around the combined bounding box
-        pad_y = int(height * padding_percent)
-        pad_x = int(width * padding_percent)
+        min_x1 = min(b[0] for b in normalized_boxes)
+        min_y1 = min(b[1] for b in normalized_boxes)
+        max_x2 = max(b[2] for b in normalized_boxes)
+        max_y2 = max(b[3] for b in normalized_boxes)
 
-        left = max(0, int((min_xmin / 1000.0) * width) - pad_x)
-        top = max(0, int((min_ymin / 1000.0) * height) - pad_y)
-        right = min(width, int((max_xmax / 1000.0) * width) + pad_x)
-        bottom = min(height, int((max_ymax / 1000.0) * height) + pad_y)
+        pad_y = max(1, int(height * padding_percent))
+        pad_x = max(1, int(width * padding_percent))
+
+        left = max(0, min_x1 - pad_x)
+        top = max(0, min_y1 - pad_y)
+        right = min(width, max_x2 + pad_x)
+        bottom = min(height, max_y2 + pad_y)
+
+        if right <= left or bottom <= top:
+            return None
 
         cropped = img.crop((left, top, right, bottom))
         buf = io.BytesIO()
