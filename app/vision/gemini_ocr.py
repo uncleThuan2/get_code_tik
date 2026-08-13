@@ -19,8 +19,9 @@ def _get_gemini_model_candidates() -> List[str]:
     candidates = [configured] if configured else []
     fallback_models = [
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash-preview-05-06",
         "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
     ]
 
     for model in fallback_models:
@@ -28,6 +29,21 @@ def _get_gemini_model_candidates() -> List[str]:
             candidates.append(model)
 
     return candidates
+
+
+def _is_model_not_available_error(res_json: dict) -> bool:
+    """Detect model names that Google disabled for new users or removed from service."""
+    if not isinstance(res_json, dict):
+        return False
+
+    error = res_json.get("error", {})
+    if not isinstance(error, dict):
+        return False
+
+    status = str(error.get("status", "")).upper()
+    message = str(error.get("message", "")).lower()
+
+    return status == "NOT_FOUND" and "no longer available" in message
 
 
 def _is_transient_gemini_error(res_json: dict) -> bool:
@@ -40,6 +56,9 @@ def _is_transient_gemini_error(res_json: dict) -> bool:
         code = error.get("code")
         status = str(error.get("status", "")).upper()
         message = str(error.get("message", "")).lower()
+
+        if _is_model_not_available_error(res_json):
+            return False
 
         if code in (429, 503) or status in {"UNAVAILABLE", "RESOURCE_EXHAUSTED", "RATE_LIMIT_EXCEEDED", "DEADLINE_EXCEEDED"}:
             return True
@@ -260,6 +279,10 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                     if "error" in res_json:
                         last_error = res_json["error"]
                         logger.error(f"Gemini API Error for model={model_name}: {last_error}")
+                        if _is_model_not_available_error(res_json):
+                            logger.warning(f"Model {model_name} is no longer available to this account; trying next fallback model...")
+                            last_error = None
+                            continue
                         if _is_transient_gemini_error(res_json):
                             logger.warning(f"Transient Gemini error detected; retrying with backoff ({backoff_seconds}s)...")
                             time.sleep(backoff_seconds)
@@ -296,7 +319,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
                     last_error = str(e)
                     break
 
-            if last_error is not None and not _is_transient_gemini_error({"error": last_error}):
+            if last_error is not None and not _is_transient_gemini_error({"error": last_error}) and not _is_model_not_available_error({"error": last_error}):
                 break
 
             if attempt < max_attempts - 1:
