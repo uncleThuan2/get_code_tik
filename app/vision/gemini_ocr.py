@@ -146,39 +146,38 @@ def delete_from_google_file_api(file_name: str, api_key: str):
 
 
 def _normalize_box_to_pixels(box: List[int], width: int, height: int):
-    """Normalize Gemini box values into pixel coordinates, supporting both 0..1000 and raw pixel formats."""
+    """Convert Gemini [x1, y1, x2, y2] pixel coordinates to safe image coordinates."""
     if not isinstance(box, (list, tuple)) or len(box) != 4:
         return None
 
     try:
-        vals = [float(v) for v in box]
+        x1, y1, x2, y2 = [float(v) for v in box]
     except (TypeError, ValueError):
         return None
 
-    if any(not (0 <= v <= 10000) for v in vals):
+    if not all([
+        0 <= x1 < width,
+        0 <= x2 <= width,
+        0 <= y1 < height,
+        0 <= y2 <= height,
+        x2 > x1,
+        y2 > y1,
+    ]):
+        logger.warning(
+            f"Invalid Gemini pixel box: {box}, "
+            f"image_size={width}x{height}"
+        )
         return None
 
-    ymin, xmin, ymax, xmax = vals
-
-    # Gemini often returns normalized [ymin, xmin, ymax, xmax] in 0..1000.
-    if max(vals) <= 1000:
-        xmin = xmin / 1000.0 * width
-        ymin = ymin / 1000.0 * height
-        xmax = xmax / 1000.0 * width
-        ymax = ymax / 1000.0 * height
-
-    x1 = max(0, min(width, xmin))
-    y1 = max(0, min(height, ymin))
-    x2 = max(0, min(width, xmax))
-    y2 = max(0, min(height, ymax))
-
-    if x2 <= x1 or y2 <= y1:
-        return None
-
-    return [int(x1), int(y1), int(x2), int(y2)]
+    return [
+        int(round(x1)),
+        int(round(y1)),
+        int(round(x2)),
+        int(round(y2)),
+    ]
 
 
-def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[int]], padding_percent: float = 0.04) -> bytes | None:
+def crop_combined_bounding_box(img_data: bytes | Image.Image, boxes: List[List[int]], padding_percent: float = 0.01) -> bytes | None:
     """Crop 1 SINGLE combined image region covering ALL detected code regions (matching sample layout region)."""
     valid_boxes = [b for b in boxes if isinstance(b, list) and len(b) == 4]
     if not img_data or not valid_boxes:
@@ -438,6 +437,10 @@ def detect_ui_box_via_gemini_vision(stream_data: bytes | Image.Image, api_key: s
                         content_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
                         parsed = json.loads(content_text)
                         ui_box = parsed.get("ui_box_2d")
+                        logger.info(
+                            f"Gemini UI box: {ui_box} | "
+                            f"original image size: {live_width}x{live_height}"
+                        )
                         if isinstance(ui_box, list) and len(ui_box) == 4:
                             return [int(float(v)) for v in ui_box]
                         return []
@@ -482,6 +485,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         logger.warning("No valid UI box detected from screenshot. Returning empty code list.")
         return [], [], None
 
+    logger.info(f"Cropping detected UI box: {ui_box}")
     sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
     if not sample_cropped_bytes:
         logger.warning("Failed to crop screenshot with detected box. Returning empty code list.")
