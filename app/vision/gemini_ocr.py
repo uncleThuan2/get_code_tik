@@ -244,7 +244,18 @@ def _load_reference_template(sample_reference: str = "") -> Image.Image | None:
 
     try:
         if reference.startswith(("http://", "https://")):
-            response = requests.get(reference, timeout=20)
+            url = reference
+            if "generativelanguage.googleapis.com" in reference:
+                api_key = os.getenv("GEMINI_API_KEY", "").strip()
+                if api_key:
+                    separator = "&" if "?" in url else "?"
+                    if "alt=media" not in url:
+                        url = f"{url}{separator}alt=media&key={api_key}"
+                    elif "key=" not in url:
+                        url = f"{url}&key={api_key}"
+                else:
+                    logger.warning("GEMINI_API_KEY is empty, cannot auth-fetch Google File API template URL.")
+            response = requests.get(url, timeout=20)
             response.raise_for_status()
             return Image.open(io.BytesIO(response.content)).convert("RGB")
 
