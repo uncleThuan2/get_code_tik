@@ -51,6 +51,8 @@ jobs:
           SAMPLE_PUBLIC_URL: ${{ secrets.SAMPLE_PUBLIC_URL }}
           GEMINI_TIMEOUT_SECONDS: ${{ secrets.GEMINI_TIMEOUT_SECONDS }}
           DEFAULT_SAMPLE_PATH: ${{ secrets.DEFAULT_SAMPLE_PATH }}
+          TELEGRAM_BOT_TOKEN_DEV: ${{ secrets.TELEGRAM_BOT_TOKEN_DEV }}
+          TELEGRAM_CHAT_ID_DEV: ${{ secrets.TELEGRAM_CHAT_ID_DEV }}
         run: |
           python -m app.main
 
