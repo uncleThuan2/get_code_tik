@@ -50,6 +50,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SAMPLE_PUBLIC_URL: ${{ secrets.SAMPLE_PUBLIC_URL }}
           GEMINI_TIMEOUT_SECONDS: ${{ secrets.GEMINI_TIMEOUT_SECONDS }}
+          DEFAULT_SAMPLE_PATH: ${{ secrets.DEFAULT_SAMPLE_PATH }}
         run: |
           python -m app.main
 
