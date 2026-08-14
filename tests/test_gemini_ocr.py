@@ -132,6 +132,16 @@ def test_extract_codes_ignores_legacy_ui_detection_calls(monkeypatch):
     assert "upload" in calls
 
 
+def test_get_default_sample_path_reads_runtime_env(monkeypatch):
+    monkeypatch.delenv("DEFAULT_SAMPLE_PATH", raising=False)
+    monkeypatch.delenv("SAMPLE_REFERENCE_IMAGE_PATH", raising=False)
+    monkeypatch.setenv("GEMINI_SAMPLE_IMAGE_PATH", "sample/co_code_lon.png")
+    assert gemini_ocr.get_default_sample_path() == "sample/co_code_lon.png"
+
+    monkeypatch.setenv("DEFAULT_SAMPLE_PATH", "sample/override.png")
+    assert gemini_ocr.get_default_sample_path() == "sample/override.png"
+
+
 def test_crop_combined_bounding_box_handles_normalized_coords():
     image = Image.new("RGB", (1000, 1000), color="white")
     box = [200, 150, 400, 350]

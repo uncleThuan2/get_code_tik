@@ -12,7 +12,17 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SAMPLE_PATH = os.getenv("DEFAULT_SAMPLE_PATH") or os.getenv("SAMPLE_REFERENCE_IMAGE_PATH", "")
+
+def get_default_sample_path() -> str:
+    """Return the current runtime sample path from environment variables.
+
+    This is intentionally resolved at runtime so GitHub Actions secrets/env values set
+    after import are still picked up correctly.
+    """
+    return (os.getenv("DEFAULT_SAMPLE_PATH") or os.getenv("SAMPLE_REFERENCE_IMAGE_PATH") or os.getenv("GEMINI_SAMPLE_IMAGE_PATH", "")).strip()
+
+
+DEFAULT_SAMPLE_PATH = get_default_sample_path()
 
 
 def _get_gemini_model_candidates() -> List[str]:
@@ -126,7 +136,7 @@ def delete_from_google_file_api(file_name: str, api_key: str):
     if not file_name:
         return
 
-    sample_reference = (DEFAULT_SAMPLE_PATH or "").strip()
+    sample_reference = get_default_sample_path()
     if sample_reference:
         if file_name in sample_reference or sample_reference.endswith(file_name):
             logger.info(f"Skipping deletion of protected sample reference: {sample_reference}")
@@ -305,7 +315,7 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
     if not stream_data:
         return [], [], None
 
-    sample_reference = (DEFAULT_SAMPLE_PATH or "").strip()
+    sample_reference = get_default_sample_path()
     if not sample_reference:
         logger.warning("DEFAULT_SAMPLE_PATH is empty; template match cannot localize the reward panel.")
         return [], [], None
