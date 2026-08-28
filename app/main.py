@@ -18,6 +18,7 @@ from app.storage.duplicate_checker import filter_new_codes
 from app.storage.cleanup import cleanup_old_daily_files
 
 from app.notification.telegram import notify_new_reward_codes
+from app.notification.discord import notify_discord_reward_codes
 
 # Configure logging
 logging.basicConfig(
@@ -54,6 +55,7 @@ async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_labe
         logger.info(f"New Reward Codes Detected! Small: {new_small} | Large: {new_large}")
         append_codes_to_daily_file(time_label, new_small, new_large)
         notify_new_reward_codes(time_label, new_small, new_large, sample_cropped_bytes)
+        notify_discord_reward_codes(time_label, new_small, new_large, sample_cropped_bytes)
     else:
         logger.info("No new non-duplicate codes detected.")
 
