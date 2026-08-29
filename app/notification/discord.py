@@ -7,6 +7,16 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+def _discord_headers(token: str, *, json_payload: bool = False) -> dict:
+    headers = {
+        "Authorization": f"Bot {token}",
+        "User-Agent": "DiscordBot (https://discord.com, 1.0)",
+    }
+    if json_payload:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
 def parse_list_from_env(env_name: str) -> List[str]:
     """Parse comma-separated values from environment variable."""
     raw_val = os.environ.get(env_name, "").strip()
@@ -32,10 +42,7 @@ def send_discord_message(
     for token in tokens:
         for channel_id in targets:
             api_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-            headers = {
-                "Authorization": f"Bot {token}",
-                "Content-Type": "application/json",
-            }
+            headers = _discord_headers(token, json_payload=True)
             payload = {
                 "content": message.strip()[:2000],
             }
@@ -72,9 +79,7 @@ def send_discord_file(
     for token in tokens:
         for channel_id in targets:
             api_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-            headers = {
-                "Authorization": f"Bot {token}",
-            }
+            headers = _discord_headers(token)
             data = {
                 "content": caption.strip()[:2000] if caption else "",
             }
