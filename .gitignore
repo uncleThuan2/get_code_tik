@@ -46,3 +46,4 @@ screenshots/*.png
 .pytest_cache/
 .coverage
 htmlcov/
+tools/
