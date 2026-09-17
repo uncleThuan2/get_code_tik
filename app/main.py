@@ -35,8 +35,18 @@ async def run_ocr_stream_session(browser: TikTokBrowser, config: dict, time_labe
     await detect_and_handle_captcha(browser.page)
     await hide_tiktok_overlays(browser.page)
     
-    # Take screenshot directly in RAM as bytes (no disk file created)
-    img_bytes = await browser.page.screenshot(type="png")
+    # Capture directly from <video> element to eliminate all TikTok UI buttons and overlays
+    img_bytes = None
+    try:
+        video_element = await browser.page.query_selector("video")
+        if video_element:
+            img_bytes = await video_element.screenshot(type="png")
+            logger.info("Captured pure stream screenshot directly from <video> element.")
+    except Exception as e:
+        logger.warning(f"Failed capturing <video> element directly ({e}), falling back to page screenshot.")
+
+    if not img_bytes:
+        img_bytes = await browser.page.screenshot(type="png")
 
     if not img_bytes:
         logger.error("Failed to capture stream screenshot bytes.")
