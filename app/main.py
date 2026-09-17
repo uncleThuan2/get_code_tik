@@ -94,7 +94,12 @@ async def main():
         if is_live and live_url:
             logger.info(f"Account is LIVE! Entering stream: {live_url}")
             await page.goto(live_url, timeout=page_load_timeout * 1000, wait_until="domcontentloaded")
-            await asyncio.sleep(3)
+            try:
+                await page.wait_for_selector("video, canvas, [class*='live-player']", timeout=12000)
+                logger.info("Live video player detected on page.")
+            except Exception:
+                logger.warning("Video player selector wait timeout, continuing with render delay.")
+            await asyncio.sleep(5)
 
             # Direct Gemini Vision AI Single Pass (In-Memory Bytes)
             await run_ocr_stream_session(browser, config, time_label)

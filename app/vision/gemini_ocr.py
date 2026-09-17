@@ -300,8 +300,8 @@ def _detect_ui_box_via_template_match(stream_data: bytes | Image.Image, sample_r
         result = cv2.matchTemplate(live_gray, template_gray, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-        if max_val < 0.05:
-            logger.warning(f"Template match confidence too low: {max_val}")
+        if max_val < 0.35:
+            logger.info(f"Template match confidence too low: {max_val:.2f} (threshold: 0.35)")
             return []
 
         x, y = max_loc
@@ -313,8 +313,9 @@ def _detect_ui_box_via_template_match(stream_data: bytes | Image.Image, sample_r
 
 def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api_key: str = None) -> Tuple[List[str], List[str], bytes | None]:
     """Two-stage OCR flow:
-    1) detect area box from the full screenshot,
-    2) crop that area and OCR the crop image using a second prompt.
+    1) detect area box from the full screenshot if sample is provided and confident,
+    2) fallback to full screenshot if template matching is absent/low confidence,
+    3) OCR using Gemini Vision AI.
     Returns:
         (small_codes: List[str], large_codes: List[str], sample_cropped_bytes: bytes | None)
     """
@@ -327,39 +328,41 @@ def extract_codes_via_gemini_vision(stream_data: bytes | Image.Image = None, api
         return [], [], None
 
     sample_reference = get_default_sample_path()
-    if not sample_reference:
-        logger.warning("DEFAULT_SAMPLE_PATH is empty; template match cannot localize the reward panel.")
-        return [], [], None
+    ui_box = []
+    if sample_reference:
+        ui_box = _detect_ui_box_via_template_match(stream_data, sample_reference)
 
-    ui_box = _detect_ui_box_via_template_match(stream_data, sample_reference)
-    if not ui_box:
-        logger.warning("No valid UI box detected from screenshot by OpenCV template match. Returning empty code list.")
-        return [], [], None
+    sample_cropped_bytes = None
+    if ui_box:
+        logger.info(f"Cropping matched UI box from screenshot: {ui_box}")
+        sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
 
-    logger.info(f"Cropping matched UI box from screenshot: {ui_box}")
-    sample_cropped_bytes = crop_combined_bounding_box(stream_data, [ui_box])
     if not sample_cropped_bytes:
-        logger.warning("Failed to crop screenshot with detected box. Returning empty code list.")
-        return [], [], None
+        logger.info("Using full stream screenshot for Gemini Vision AI code extraction.")
+        if isinstance(stream_data, Image.Image):
+            buf = io.BytesIO()
+            stream_data.save(buf, format="PNG")
+            sample_cropped_bytes = buf.getvalue()
+        else:
+            sample_cropped_bytes = stream_data
 
     crop_file_name, crop_file_uri = upload_to_google_file_api(sample_cropped_bytes, key)
     if not crop_file_uri:
-        logger.error("Failed to upload cropped image to Google File API for OCR step.")
+        logger.error("Failed to upload image to Google File API for OCR step.")
         return [], [], sample_cropped_bytes
 
     try:
         prompt = (
-            "You are given exactly ONE image only: the cropped reward-panel image. "
+            "You are given an image from a TikTok livestream (either a cropped reward-panel or the full livestream screenshot). "
             "Use ONLY the visible image content as the source of truth. "
             "Do NOT use external knowledge, previous screenshots, sample images, or expected code patterns. "
             "\n\n"
             "TASK: "
-            "Extract every currently visible reward code from the cropped reward panel. "
+            "Locate and extract every currently visible reward code from the reward panel/banner on screen. "
             "\n\n"
-            "There are TWO types of reward codes: "
-            "1. SMALL CODES: short reward codes displayed in the individual small reward/code elements within the reward panel. "
-            "Each separate element represents one separate small code. "
-            "2. LARGE CODES: the primary reward code displayed in the main/prominent reward-code area of the reward panel. "
+            "1. SMALL CODES: short reward codes displayed in the individual small reward/code elements within the reward panel. Each separate element represents one separate small code. "
+            "\n\n"
+            "2. LARGE CODES: the primary reward code displayed in the main/prominent reward-code area (e.g. pink or distinct banner) of the reward panel. "
             "\n\n"
             "Do NOT identify code types based on color. "
             "Do NOT assume a specific color, icon, position, shape, or visual theme. "
