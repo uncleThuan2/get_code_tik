@@ -25,27 +25,9 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Get Playwright Version
-        id: playwright-version
-        run: |
-          echo "version=$(python -c 'import playwright; print(playwright.__version__)')" >> $GITHUB_OUTPUT
-
-      - name: Cache Playwright Chromium Browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
-
       - name: Install Playwright Chromium & system deps
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
-          python -m playwright install chromium --with-deps
-
-      - name: Install Playwright System Dependencies Only
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: |
-          python -m playwright install-deps chromium
+          python -m playwright install --with-deps chromium
 
       - name: Run TikTok Reward Code Bot
         env:
